@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "mcp__svelte__list-sections",
+      "mcp__svelte__get-documentation",
+      "Bash(npx sv create:*)",
+      "Bash(npm install:*)",
+      "Bash(command -v nvm:*)",
+      "Bash(source ~/.nvm/nvm.sh)",
+      "Bash(nvm list:*)",
+      "Bash(fnm list:*)",
+      "Bash(export NVM_DIR=\"$HOME/.nvm\")",
+      "Bash([ -s \"$NVM_DIR/nvm.sh\" ])",
+      "Bash(. \"$NVM_DIR/nvm.sh\")",
+      "Bash(nvm install:*)",
+      "Bash(nvm use:*)",
+      "Bash(npx sv add:*)",
+      "Bash(npx shadcn-svelte@latest init:*)",
+      "Bash(npx shadcn-svelte@latest add:*)",
+      "Bash(npm run build:*)"
+    ]
+  }
+}

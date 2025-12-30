@@ -1,0 +1,176 @@
+@import 'tailwindcss';
+
+/* === Reflective Resonance Design Tokens === */
+:root {
+	/* Background colors */
+	--rr-bg: #05060a;
+	--rr-surface: #0a0b10;
+	--rr-surface-elevated: #10121a;
+
+	/* Accent colors - Neon palette */
+	--rr-accent-violet: #7c3aed;
+	--rr-accent-blue: #0ea5e9;
+	--rr-accent-cyan: #06b6d4;
+	--rr-accent-pink: #ec4899;
+	--rr-accent-amber: #f59e0b;
+	--rr-accent-emerald: #10b981;
+
+	/* Text colors */
+	--rr-text-primary: #f1f5f9;
+	--rr-text-secondary: #94a3b8;
+	--rr-text-muted: #64748b;
+
+	/* Glow effects */
+	--rr-glow-violet: rgba(124, 58, 237, 0.35);
+	--rr-glow-blue: rgba(14, 165, 233, 0.35);
+	--rr-glow-error: rgba(239, 68, 68, 0.35);
+
+	/* Ring sizes */
+	--rr-ring-size: 140px;
+	--rr-ring-border: 3px;
+
+	/* Transitions */
+	--rr-transition-fast: 150ms ease;
+	--rr-transition-normal: 250ms ease;
+	--rr-transition-slow: 400ms ease;
+
+	/* Z-index layers */
+	--rr-z-base: 0;
+	--rr-z-dnd-item: 100;
+	--rr-z-dnd-dragging: 200;
+	--rr-z-overlay: 300;
+	--rr-z-modal: 400;
+	--rr-z-toast: 500;
+}
+
+/* === Base Styles === */
+html,
+body {
+	height: 100%;
+	background-color: var(--rr-bg);
+	color: var(--rr-text-primary);
+	font-family:
+		'Inter',
+		-apple-system,
+		BlinkMacSystemFont,
+		'Segoe UI',
+		Roboto,
+		sans-serif;
+}
+
+/* === Glow Animation === */
+@keyframes glow-pulse {
+	0%,
+	100% {
+		box-shadow:
+			0 0 20px var(--rr-glow-violet),
+			0 0 40px var(--rr-glow-violet);
+	}
+	50% {
+		box-shadow:
+			0 0 30px var(--rr-glow-violet),
+			0 0 60px var(--rr-glow-violet);
+	}
+}
+
+@keyframes glow-pulse-blue {
+	0%,
+	100% {
+		box-shadow:
+			0 0 20px var(--rr-glow-blue),
+			0 0 40px var(--rr-glow-blue);
+	}
+	50% {
+		box-shadow:
+			0 0 30px var(--rr-glow-blue),
+			0 0 60px var(--rr-glow-blue);
+	}
+}
+
+/* === Slot Ring Styles === */
+.slot-ring {
+	width: var(--rr-ring-size);
+	height: var(--rr-ring-size);
+	border-radius: 50%;
+	border: var(--rr-ring-border) dashed var(--rr-text-muted);
+	transition:
+		border-color var(--rr-transition-normal),
+		box-shadow var(--rr-transition-normal),
+		transform var(--rr-transition-fast);
+}
+
+.slot-ring--empty {
+	border-style: dashed;
+}
+
+.slot-ring--hover {
+	border-color: var(--rr-accent-violet);
+	box-shadow: 0 0 20px var(--rr-glow-violet);
+}
+
+.slot-ring--selected {
+	border-style: solid;
+	border-color: var(--rr-accent-blue);
+	box-shadow: 0 0 25px var(--rr-glow-blue);
+}
+
+.slot-ring--assigned {
+	border-style: solid;
+	animation: glow-pulse 2s ease-in-out infinite;
+}
+
+.slot-ring--streaming {
+	animation: glow-pulse-blue 1s ease-in-out infinite;
+}
+
+.slot-ring--error {
+	border-color: #ef4444;
+	box-shadow: 0 0 20px var(--rr-glow-error);
+}
+
+/* === Drag and Drop === */
+.dnd-shadow-item {
+	opacity: 0.5;
+	transform: scale(0.95);
+}
+
+.dnd-dragged-item {
+	z-index: var(--rr-z-dnd-dragging);
+	box-shadow: 0 20px 40px rgba(0, 0, 0, 0.5);
+}
+
+/* === Reduced Motion === */
+@media (prefers-reduced-motion: reduce) {
+	*,
+	*::before,
+	*::after {
+		animation-duration: 0.01ms !important;
+		animation-iteration-count: 1 !important;
+		transition-duration: 0.01ms !important;
+	}
+}
+
+/* === Scrollbar Styling === */
+::-webkit-scrollbar {
+	width: 8px;
+	height: 8px;
+}
+
+::-webkit-scrollbar-track {
+	background: var(--rr-surface);
+}
+
+::-webkit-scrollbar-thumb {
+	background: var(--rr-text-muted);
+	border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+	background: var(--rr-text-secondary);
+}
+
+/* === Focus Visible === */
+*:focus-visible {
+	outline: 2px solid var(--rr-accent-blue);
+	outline-offset: 2px;
+}
