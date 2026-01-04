@@ -14,7 +14,7 @@ export type SlotId = 1 | 2 | 3 | 4 | 5 | 6;
 export type SlotStatus = 'idle' | 'streaming' | 'done' | 'error';
 
 // Error types for retry logic
-export type ErrorType = 'network' | 'timeout' | 'rate_limit' | 'server_error' | 'unknown';
+export type ErrorType = 'network' | 'timeout' | 'rate_limit' | 'server_error' | 'tts_error' | 'unknown';
 
 // Agent definition with visual properties
 export interface Agent {

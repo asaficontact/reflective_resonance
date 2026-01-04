@@ -24,7 +24,9 @@
       "Bash(curl:*)",
       "Bash(ls:*)",
       "WebFetch(domain:elevenlabs.io)",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "Bash(grep:*)",
+      "Bash(find:*)"
     ]
   }
 }

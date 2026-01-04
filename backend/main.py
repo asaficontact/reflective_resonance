@@ -1,9 +1,11 @@
 """FastAPI application with SSE streaming for Reflective Resonance."""
 
 import logging
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from sse_starlette.sse import EventSourceResponse
 
 from backend.agents import AGENTS
@@ -46,6 +48,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Mount artifacts directory for audio file retrieval
+# Audio files served at: GET /v1/audio/tts/sessions/{session_id}/{filename}.wav
+ARTIFACTS_DIR = Path("artifacts")
+ARTIFACTS_DIR.mkdir(exist_ok=True)
+app.mount("/v1/audio", StaticFiles(directory=str(ARTIFACTS_DIR)), name="audio")
+
 
 # =============================================================================
 # API Routes
@@ -66,17 +74,17 @@ async def get_agents() -> AgentsResponse:
 
 @app.post("/v1/chat")
 async def chat(request: ChatRequest):
-    """Stream LLM responses to all requested slots via SSE.
+    """Broadcast message to all slots and generate TTS audio via SSE.
 
     This endpoint broadcasts the user message to all slots specified in the
-    request and streams back responses as Server-Sent Events. Each slot
-    streams independently and concurrently.
+    request. Each slot gets a structured LLM response (text + voice_profile)
+    and TTS audio is generated. All processing happens concurrently.
 
     SSE Events emitted:
-    - slot.start: When a slot begins streaming
-    - slot.token: For each token/chunk during streaming
-    - slot.done: When a slot completes successfully
-    - slot.error: When a slot encounters an error
+    - slot.start: When a slot begins processing
+    - slot.done: When LLM response complete (includes text + voiceProfile)
+    - slot.audio: When TTS audio file is ready (includes audioPath)
+    - slot.error: When an error occurs (LLM or TTS)
     - done: When all slots have completed or errored
     """
     logger.info(

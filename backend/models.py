@@ -4,6 +4,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from backend.tts.profiles import VoiceProfileName
+
 
 # Type aliases matching frontend
 AgentId = Literal[
@@ -15,7 +17,7 @@ AgentId = Literal[
     "gemini-3",
 ]
 SlotId = Literal[1, 2, 3, 4, 5, 6]
-ErrorType = Literal["network", "timeout", "rate_limit", "server_error", "unknown"]
+ErrorType = Literal["network", "timeout", "rate_limit", "server_error", "tts_error", "unknown"]
 
 
 # =============================================================================
@@ -37,6 +39,22 @@ class ChatRequest(BaseModel):
     slots: list[SlotRequest] = Field(
         min_length=1, max_length=6, description="Slots to broadcast to"
     )
+
+
+# =============================================================================
+# Structured LLM Output Models
+# =============================================================================
+
+
+class SpokenResponse(BaseModel):
+    """Structured output from LLM for TTS generation.
+
+    The LLM returns this JSON structure, which determines both
+    the text to speak and which voice profile to use.
+    """
+
+    text: str = Field(min_length=1, description="The spoken response text")
+    voice_profile: VoiceProfileName = Field(description="Voice profile for TTS synthesis")
 
 
 # =============================================================================
@@ -97,7 +115,18 @@ class SlotDoneEvent(BaseModel):
 
     slotId: int
     agentId: str
-    fullContent: str
+    text: str
+    voiceProfile: str
+
+
+class SlotAudioEvent(BaseModel):
+    """Emitted when TTS audio is ready for a slot."""
+
+    slotId: int
+    agentId: str
+    voiceProfile: str
+    audioFormat: Literal["wav"] = "wav"
+    audioPath: str  # Relative path: "tts/sessions/<session_id>/<agent>_<voice>.wav"
 
 
 class ErrorDetail(BaseModel):

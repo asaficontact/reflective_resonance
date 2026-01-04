@@ -20,7 +20,16 @@ interface SlotTokenEvent {
 interface SlotDoneEvent {
 	slotId: number;
 	agentId: string;
-	fullContent: string;
+	text: string;
+	voiceProfile: string;
+}
+
+interface SlotAudioEvent {
+	slotId: number;
+	agentId: string;
+	voiceProfile: string;
+	audioFormat: string;
+	audioPath: string;
 }
 
 interface SlotErrorEvent {
@@ -175,15 +184,31 @@ function handleSSEEvent(
 		}
 
 		case 'slot.token': {
+			// Legacy event - kept for backwards compatibility
 			const event = data as SlotTokenEvent;
 			callbacks.onToken(event.slotId, event.content);
 			break;
 		}
 
 		case 'slot.done': {
+			// Phase 2: Full text arrives at once (no streaming with structured output)
 			const event = data as SlotDoneEvent;
+			// Send full text as single token, then mark complete
+			callbacks.onToken(event.slotId, event.text);
 			callbacks.onSlotComplete(event.slotId);
-			console.debug(`Slot ${event.slotId} completed: ${event.fullContent.length} chars`);
+			console.debug(
+				`Slot ${event.slotId} completed: voice=${event.voiceProfile}, ${event.text.length} chars`
+			);
+			break;
+		}
+
+		case 'slot.audio': {
+			// Phase 2: TTS audio file ready
+			const event = data as SlotAudioEvent;
+			console.debug(
+				`Slot ${event.slotId} audio ready: ${event.audioPath} (${event.voiceProfile})`
+			);
+			// Audio playback will be handled in a future phase
 			break;
 		}
 
