@@ -38,6 +38,12 @@ Guidelines:
     timeout_s: int = 60
     retries: int = 3
 
+    # ElevenLabs TTS configuration
+    elevenlabs_api_key: str = ""
+    elevenlabs_default_model: str = "eleven_flash_v2_5"
+    tts_output_format: str = "pcm_24000"
+    tts_fallback_profile: str = "friendly_casual"
+
     model_config = SettingsConfigDict(
         env_prefix="RR_",
         env_file=".env",
@@ -62,3 +68,8 @@ if anthropic_key:
     os.environ["ANTHROPIC_API_KEY"] = anthropic_key
 if google_key:
     os.environ["GOOGLE_API_KEY"] = google_key
+
+# ElevenLabs API key (check both RR_-prefixed and standard)
+elevenlabs_key = settings.elevenlabs_api_key or os.environ.get("ELEVENLABS_API_KEY", "")
+if elevenlabs_key:
+    os.environ["ELEVENLABS_API_KEY"] = elevenlabs_key

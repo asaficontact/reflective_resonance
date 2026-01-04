@@ -251,6 +251,23 @@ wheels = [
 ]
 
 [[package]]
+name = "elevenlabs"
+version = "2.27.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpx" },
+    { name = "pydantic" },
+    { name = "pydantic-core" },
+    { name = "requests" },
+    { name = "typing-extensions" },
+    { name = "websockets" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/55/8a/8205e52b46f1c5bd48c76b06d43bfbfc35c649a659f56d2b0e68800e67ee/elevenlabs-2.27.0.tar.gz", hash = "sha256:06d16965d0443d04858e1c00efa19131c79eb0ffcf6e0d281632a6ee4c4fe464", size = 433674, upload-time = "2025-12-15T10:14:10.486Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c3/21/a1f4c12b089f0bed2ada23bdce85d995c94a543d2424fa7f71ce942f1618/elevenlabs-2.27.0-py3-none-any.whl", hash = "sha256:e97170ec2c37f9ad63bce10712e980fa1e869c8861c7efd7812d5ab498a36279", size = 1159291, upload-time = "2025-12-15T10:14:08.687Z" },
+]
+
+[[package]]
 name = "fastapi"
 version = "0.128.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1237,6 +1254,7 @@ name = "reflective-resonance"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "elevenlabs" },
     { name = "fastapi" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
@@ -1248,6 +1266,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "elevenlabs", specifier = ">=1.0.0" },
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "pydantic", specifier = ">=2.0.0" },
     { name = "pydantic-settings", specifier = ">=2.0.0" },

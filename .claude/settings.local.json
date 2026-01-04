@@ -22,7 +22,9 @@
       "Bash(uv sync:*)",
       "Bash(uv python pin:*)",
       "Bash(curl:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "WebFetch(domain:elevenlabs.io)",
+      "WebFetch(domain:github.com)"
     ]
   }
 }
