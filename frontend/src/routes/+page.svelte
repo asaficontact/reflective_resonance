@@ -3,7 +3,8 @@
 	import { browser } from '$app/environment';
 	import { appStore } from '$lib/stores/app.svelte';
 	import { createMultiStream } from '$lib/utils/mock-responses';
-	import { KEYBOARD_SHORTCUTS } from '$lib/config/constants';
+	import { createRealStream } from '$lib/utils/streaming';
+	import { KEYBOARD_SHORTCUTS, API_CONFIG } from '$lib/config/constants';
 	import type { SlotId, ErrorType } from '$lib/types';
 
 	import AgentPalette from '$lib/components/AgentPalette.svelte';
@@ -51,16 +52,15 @@
 			appStore.setSlotStatus(slotId as SlotId, 'streaming');
 		});
 
-		// Start streaming
-		activeStream = createMultiStream({
-			slots: slotsToStream,
-			onToken: (slotId, token) => {
+		// Streaming callbacks (shared by mock and real)
+		const streamCallbacks = {
+			onToken: (slotId: number, token: string) => {
 				const messageId = messageIds.get(slotId as SlotId);
 				if (messageId) {
 					appStore.appendToMessage(messageId, token);
 				}
 			},
-			onSlotComplete: (slotId) => {
+			onSlotComplete: (slotId: number) => {
 				const messageId = messageIds.get(slotId as SlotId);
 				if (messageId) {
 					appStore.updateMessage(messageId, { isStreaming: false });
@@ -68,7 +68,7 @@
 				appStore.setSlotStatus(slotId as SlotId, 'done');
 				appStore.resetRetryCount(slotId as SlotId);
 			},
-			onSlotError: (slotId, error) => {
+			onSlotError: (slotId: number, error: ErrorType) => {
 				const messageId = messageIds.get(slotId as SlotId);
 				if (messageId) {
 					appStore.updateMessage(messageId, {
@@ -83,7 +83,21 @@
 				appStore.setIsSending(false);
 				activeStream = null;
 			}
-		});
+		};
+
+		// Start streaming (mock or real based on config)
+		if (API_CONFIG.useMock) {
+			activeStream = createMultiStream({
+				slots: slotsToStream,
+				...streamCallbacks
+			});
+		} else {
+			activeStream = createRealStream({
+				message: content,
+				slots: slotsToStream,
+				...streamCallbacks
+			});
+		}
 	}
 
 	// Get human-readable error message

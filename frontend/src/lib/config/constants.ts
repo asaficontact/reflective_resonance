@@ -27,9 +27,15 @@ export const KEYBOARD_SHORTCUTS = {
 	sendMessage: 'Enter'
 } as const;
 
-// Streaming simulation config
+// Streaming simulation config (for mock mode)
 export const STREAMING_CONFIG = {
 	initialDelayMs: [200, 1500], // Random delay before streaming starts
 	tokenDelayMs: [30, 80], // Delay between tokens
 	errorChance: 0.05 // 5% chance of error in dev mode
+} as const;
+
+// Backend API configuration
+export const API_CONFIG = {
+	baseUrl: 'http://localhost:8000',
+	useMock: false // Set to true to use mock streaming instead of real backend
 } as const;

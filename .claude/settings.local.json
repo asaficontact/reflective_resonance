@@ -18,7 +18,11 @@
       "Bash(npx sv add:*)",
       "Bash(npx shadcn-svelte@latest init:*)",
       "Bash(npx shadcn-svelte@latest add:*)",
-      "Bash(npm run build:*)"
+      "Bash(npm run build:*)",
+      "Bash(uv sync:*)",
+      "Bash(uv python pin:*)",
+      "Bash(curl:*)",
+      "Bash(ls:*)"
     ]
   }
 }
