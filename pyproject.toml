@@ -13,15 +13,15 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "python-multipart>=0.0.9",
     "httpx>=0.27.0",
-    "rawagents",
+    "rawagents @ git+https://github.com/asaficontact/rawagents.git@v0.1.0",
     "elevenlabs>=1.0.0",
 ]
 
-[tool.uv.sources]
-rawagents = { path = "/Users/tawab/Projects/MediaLab/rawagents", editable = true }
-
 [tool.hatch.build.targets.wheel]
 packages = ["backend"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [build-system]
 requires = ["hatchling"]

@@ -140,13 +140,10 @@ uv run uvicorn backend.api:app --reload --host 0.0.0.0 --port 8000
 
 ### 6.2 RawAgents installation (important)
 
-RawAgents lives at a private/local path on the author’s machine:
-`/Users/tawab/Projects/MediaLab/rawagents`
-
-For a team, we need a reproducible install strategy. Acceptable MVP options:
+RawAgents must be installable reproducibly by the whole team. Acceptable MVP options:
 
 #### Option A (recommended): git dependency
-- Host RawAgents in a private git repo and add as a git dependency via uv.
+- Host RawAgents in a git repo and add as a pinned git dependency via uv (tag or commit hash).
 
 #### Option B: local editable path dependency
 - Each developer sets an env var `RAWAGENTS_REPO_PATH` and installs editable:

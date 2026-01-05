@@ -1,15 +1,17 @@
 # Reflective Resonance
 
-An interactive art installation featuring 6 speaker slots controlled by multiple LLM agents. Users assign AI agents to speaker positions via drag-and-drop, send messages, and receive parallel streaming responses. The system is designed to eventually transform text responses into water wave parameters for physical speakers.
+An interactive art installation featuring 6 speaker slots controlled by multiple LLM agents. Users assign AI agents to speaker positions via drag-and-drop, speak via push-to-talk audio input, and receive parallel streaming responses through a 3-turn inter-agent workflow. All responses are converted to speech via ElevenLabs TTS.
 
-**Current Stage:** MVP - Text-based interaction with real-time LLM streaming.
+**Current Stage:** Full audio pipeline - Voice input (STT) → 3-turn LLM workflow → Voice output (TTS).
 
 ## Quick Start
 
 ```bash
 # 1. Setup environment
 cp .env.example .env
-# Edit .env with your API keys (OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY)
+# Edit .env with your API keys:
+# - OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY (LLM providers)
+# - ELEVENLABS_API_KEY (required for TTS and STT)
 
 # 2. Start backend (requires Python 3.13+)
 uv sync
@@ -21,7 +23,7 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:5173 - drag agents to slots, type a message, watch responses stream.
+Open http://localhost:5173 - drag agents to slots, hold the mic button to speak, watch the 3-turn workflow run.
 
 ---
 
@@ -32,19 +34,19 @@ Open http://localhost:5173 - drag agents to slots, type a message, watch respons
 │                              FRONTEND (SvelteKit)                           │
 │  ┌─────────────┐     ┌──────────────────┐     ┌───────────────────────────┐ │
 │  │AgentPalette │     │   SpeakerSlots   │     │    ResponsesPanel         │ │
-│  │(drag source)│────▶│ (6 slot grid)    │     │  (streaming responses)    │ │
+│  │(drag source)│────▶│ (6 slot grid)    │     │  (T1/T2/T3 turn tabs)     │ │
 │  └─────────────┘     └────────┬─────────┘     └───────────────────────────┘ │
 │                               │                            ▲                │
 │                               ▼                            │                │
 │                      ┌────────────────┐                    │                │
-│                      │   ChatDock     │                    │                │
-│                      │ (message input)│                    │                │
-│                      └───────┬────────┘                    │                │
+│                      │AudioInputDock  │                    │                │
+│                      │(push-to-talk)  │──▶ POST /v1/stt    │                │
+│                      └───────┬────────┘      (transcribe)  │                │
 │                              │                             │                │
 │              ┌───────────────▼─────────────────────────────┘                │
 │              │         appStore (Svelte 5 Runes)                            │
-│              │  - slots[], messages[], selectedSlotId                       │
-│              │  - assignAgentToSlot(), addMessage(), appendToMessage()      │
+│              │  - slots[], messages[], turnStatus                           │
+│              │  - getTurnsForSlot(), setTurnStatus()                        │
 │              └───────────────┬──────────────────────────────────────────────┤
 │                              │                                              │
 │                    POST /v1/chat + SSE streaming                            │
@@ -55,34 +57,31 @@ Open http://localhost:5173 - drag agents to slots, type a message, watch respons
 │                                                                             │
 │  ┌─────────────────────────────────────────────────────────────────────┐    │
 │  │                        main.py (Routes)                             │    │
-│  │  POST /v1/chat ──▶ EventSourceResponse(broadcast_chat(...))         │    │
+│  │  POST /v1/chat ──▶ 3-Turn Workflow (SSE)                            │    │
+│  │  POST /v1/stt  ──▶ ElevenLabs Scribe (transcription)                │    │
 │  │  GET  /v1/agents, /v1/health, POST /v1/reset                        │    │
 │  └─────────────────────────────────────────────────────────────────────┘    │
 │                               │                                             │
 │                               ▼                                             │
 │  ┌─────────────────────────────────────────────────────────────────────┐    │
-│  │                    streaming.py (SSE Multiplexing)                  │    │
+│  │                    workflow.py (3-Turn Orchestrator)                │    │
 │  │                                                                     │    │
-│  │   broadcast_chat()                                                  │    │
-│  │       │                                                             │    │
-│  │       ├──▶ stream_slot(1) ──┐                                       │    │
-│  │       ├──▶ stream_slot(2) ──┼──▶ asyncio.Queue ──▶ yield SSE events │    │
-│  │       └──▶ stream_slot(N) ──┘                                       │    │
+│  │   Turn 1 (Respond): All slots respond to user in parallel           │    │
+│  │   Turn 2 (Comment): Each slot comments on one peer's response       │    │
+│  │   Turn 3 (Reply):   Slots that received comments reply              │    │
 │  │                                                                     │    │
-│  │   Events: slot.start → slot.token* → slot.done|slot.error → done    │    │
+│  │   Each turn: LLM generation → TTS audio (WAV) → SSE events          │    │
 │  └─────────────────────────────────────────────────────────────────────┘    │
 │                               │                                             │
 │         ┌─────────────────────┼─────────────────────┐                       │
 │         ▼                     ▼                     ▼                       │
 │  ┌─────────────┐     ┌─────────────────┐    ┌──────────────┐                │
-│  │  agents.py  │     │conversations.py │    │  config.py   │                │
-│  │             │     │                 │    │              │                │
-│  │ AgentId →   │     │ slotId →        │    │ .env vars    │                │
-│  │ LiteLLM     │     │ Conversation    │    │ system       │                │
-│  │ model map   │     │ (history)       │    │ prompt       │                │
-│  └──────┬──────┘     └─────────────────┘    └──────────────┘                │
-│         │                                                                   │
-│         ▼                                                                   │
+│  │    tts/     │     │     stt/        │    │  sessions.py │                │
+│  │ ElevenLabs  │     │ ElevenLabs      │    │              │                │
+│  │ TTS + voice │     │ Scribe STT      │    │ Audio file   │                │
+│  │ profiles    │     │ (English only)  │    │ management   │                │
+│  └─────────────┘     └─────────────────┘    └──────────────┘                │
+│                                                                             │
 │  ┌─────────────────────────────────────────────────────────────────────┐    │
 │  │                  rawagents (AsyncLLM + LiteLLM)                      │    │
 │  │   anthropic/claude-*, openai/gpt-*, gemini/gemini-*                 │    │
@@ -101,7 +100,9 @@ Open http://localhost:5173 - drag agents to slots, type a message, watch respons
 | Python | ≥3.13 | Required by rawagents |
 | FastAPI | ≥0.115 | HTTP framework |
 | sse-starlette | ≥2.2 | Server-Sent Events |
-| rawagents | local | LLM client (AsyncLLM, Conversation) |
+| rawagents | git | LLM client (AsyncLLM, Conversation) |
+| elevenlabs | ≥1.0 | TTS audio generation |
+| httpx | ≥0.27 | Async HTTP client for STT |
 | pydantic | ≥2.0 | Request/response validation |
 | uvicorn | ≥0.32 | ASGI server |
 
@@ -109,12 +110,25 @@ Open http://localhost:5173 - drag agents to slots, type a message, watch respons
 
 ```
 backend/
-├── main.py           # FastAPI app, routes, CORS
-├── streaming.py      # SSE multiplexing with asyncio.Queue
+├── main.py           # FastAPI app, routes (/v1/chat, /v1/stt, /v1/agents)
+├── workflow.py       # 3-turn orchestrator (Turn 1→2→3 with parallel LLM + TTS)
+├── streaming.py      # SSE event delegation to workflow
+├── sessions.py       # TTS session management (artifacts/tts/sessions/)
 ├── agents.py         # Agent registry, LLM client factory
 ├── conversations.py  # Per-slot conversation history
 ├── models.py         # Pydantic models for API + SSE events
-└── config.py         # Settings from environment
+├── config.py         # Settings from environment
+├── prompts/          # Jinja2 templates for each turn's LLM prompt
+│   ├── turn1_response.j2
+│   ├── turn2_comment_select.j2
+│   └── turn3_reply.j2
+├── tts/              # ElevenLabs TTS integration
+│   ├── elevenlabs_client.py  # TTS client wrapper
+│   ├── profiles.py           # Voice profiles per agent
+│   └── wav.py                # PCM to WAV conversion
+└── stt/              # ElevenLabs STT integration
+    ├── elevenlabs_stt.py     # Scribe v1 client
+    └── sessions.py           # STT session management
 ```
 
 ### API Endpoints
@@ -123,36 +137,62 @@ backend/
 |----------|--------|-------------|
 | `/v1/health` | GET | Health check → `{"status": "ok"}` |
 | `/v1/agents` | GET | List 6 available agents |
-| `/v1/chat` | POST | Stream responses via SSE |
+| `/v1/chat` | POST | Run 3-turn workflow, stream responses via SSE |
+| `/v1/stt` | POST | Transcribe audio via ElevenLabs Scribe (multipart/form-data) |
 | `/v1/reset` | POST | Clear all conversation history |
+| `/v1/audio/*` | GET | Static file server for TTS/STT artifacts |
 
 ### SSE Event Protocol
 
-When POST to `/v1/chat`, the response is a Server-Sent Events stream:
+When POST to `/v1/chat`, the response is a Server-Sent Events stream implementing a 3-turn workflow:
 
 ```
+event: session.start
+data: {"sessionId": "abc-123"}
+
+event: turn.start
+data: {"turnIndex": 1, "sessionId": "abc-123"}
+
 event: slot.start
-data: {"slotId": 1, "agentId": "claude-sonnet-4-5"}
-
-event: slot.token
-data: {"slotId": 1, "content": "Rip"}
-
-event: slot.token
-data: {"slotId": 1, "content": "ples "}
+data: {"slotId": 1, "agentId": "claude-sonnet-4-5", "turnIndex": 1}
 
 event: slot.done
-data: {"slotId": 1, "agentId": "claude-sonnet-4-5", "fullContent": "Ripples greet your flowing soul."}
+data: {"slotId": 1, "agentId": "claude-sonnet-4-5", "turnIndex": 1, "kind": "response", "text": "...", "voiceProfile": {...}}
+
+event: slot.audio
+data: {"slotId": 1, "turnIndex": 1, "kind": "response", "audioPath": "tts/sessions/.../audio.wav"}
+
+event: turn.done
+data: {"turnIndex": 1, "slotCount": 3, "sessionId": "abc-123"}
+
+event: turn.start
+data: {"turnIndex": 2, "sessionId": "abc-123"}
+
+... (Turn 2: Comments) ...
+
+event: turn.start
+data: {"turnIndex": 3, "sessionId": "abc-123"}
+
+... (Turn 3: Replies) ...
 
 event: done
-data: {"completedSlots": 2}
+data: {"completedSlots": 3}
 ```
 
 **Event Types:**
-- `slot.start` - Agent began streaming for this slot
-- `slot.token` - Token chunk (may arrive rapidly)
-- `slot.done` - Slot completed successfully
-- `slot.error` - Slot failed (includes `error.type`: `network`|`timeout`|`rate_limit`|`server_error`)
-- `done` - All slots finished
+- `session.start` - New workflow session started (provides sessionId)
+- `turn.start` - Turn began (turnIndex: 1=Response, 2=Comment, 3=Reply)
+- `turn.done` - Turn completed for all slots
+- `slot.start` - Agent began processing for this slot/turn
+- `slot.done` - LLM response complete (includes text, voiceProfile, kind)
+- `slot.audio` - TTS audio file ready (includes audioPath)
+- `slot.error` - Slot failed (includes `error.type`: `network`|`timeout`|`rate_limit`|`server_error`|`tts_error`)
+- `done` - All turns finished
+
+**Message Kinds:**
+- `response` - Turn 1: Direct response to user
+- `comment` - Turn 2: Comment on another agent's response
+- `reply` - Turn 3: Reply to received comment
 
 ### Agent Model Mapping
 
@@ -238,14 +278,14 @@ frontend/src/
 │   │   ├── AgentPalette.svelte    # Left sidebar - draggable agent list
 │   │   ├── SpeakerSlots.svelte    # Center - 3x2 grid of slots
 │   │   ├── SpeakerSlotRing.svelte # Individual slot (drop target)
-│   │   ├── ChatDock.svelte        # Bottom - message input
-│   │   ├── ResponsesPanel.svelte  # Right sidebar - streaming responses
-│   │   ├── ResponseCard.svelte    # Individual response display
+│   │   ├── AudioInputDock.svelte  # Bottom - push-to-talk mic button
+│   │   ├── ResponsesPanel.svelte  # Right sidebar - 3-turn response tabs
+│   │   ├── ResponseCard.svelte    # Individual response with audio player
 │   │   └── ui/                    # Reusable primitives (Button, Input, etc)
 │   ├── stores/
 │   │   └── app.svelte.ts          # Global state with Svelte 5 Runes
 │   ├── utils/
-│   │   ├── streaming.ts           # Real SSE client (createRealStream)
+│   │   ├── streaming.ts           # Real SSE client (3-turn workflow support)
 │   │   └── mock-responses.ts      # Mock streaming for development
 │   ├── config/
 │   │   ├── constants.ts           # API_CONFIG, keyboard shortcuts
@@ -325,15 +365,16 @@ export function createRealStream(options): { cancel: () => void } {
 │                                                                    │
 │  ┌──────────┐  ┌─────────────────────────────────┐  ┌───────────┐  │
 │  │  AGENTS  │  │         SPEAKER SLOTS           │  │ RESPONSES │  │
-│  │          │  │                                 │  │           │  │
-│  │ [Claude] │  │    [1]      [2]      [3]        │  │ [Slot 1]  │  │
-│  │ [GPT]    │  │                                 │  │ streaming │  │
-│  │ [Gemini] │  │    [4]      [5]      [6]        │  │           │  │
-│  │   ...    │  │                                 │  │ [Slot 2]  │  │
-│  │          │  │                                 │  │ done      │  │
-│  └──────────┘  │   ┌───────────────────────┐     │  │           │  │
-│     240px      │   │ Type message... [Send]│     │  └───────────┘  │
-│                │   └───────────────────────┘     │     320px       │
+│  │          │  │                                 │  │  T1│T2│T3 │  │
+│  │ [Claude] │  │    [1]      [2]      [3]        │  │ ─────────  │  │
+│  │ [GPT]    │  │                                 │  │ [Slot 1]  │  │
+│  │ [Gemini] │  │    [4]      [5]      [6]        │  │  ▶ Play   │  │
+│  │   ...    │  │                                 │  │           │  │
+│  │          │  │                                 │  │ [Slot 2]  │  │
+│  └──────────┘  │         ┌─────────┐             │  │  ▶ Play   │  │
+│     240px      │         │  🎤 MIC │             │  │           │  │
+│                │         │(hold)   │             │  └───────────┘  │
+│                │         └─────────┘             │     320px       │
 │                └─────────────────────────────────┘                 │
 └────────────────────────────────────────────────────────────────────┘
 ```
@@ -358,6 +399,9 @@ export const API_CONFIG = {
 Create `.env` in project root (copy from `.env.example`):
 
 ```bash
+# Required - ElevenLabs for TTS and STT
+ELEVENLABS_API_KEY=...
+
 # Required - at least one LLM provider
 OPENAI_API_KEY=sk-...
 ANTHROPIC_API_KEY=sk-ant-...
@@ -453,15 +497,23 @@ curl -N -X POST http://localhost:8000/v1/chat \ # Test SSE stream
 |-----|--------|
 | `1-6` | Select speaker slot |
 | `Escape` | Clear slot selection |
-| `Enter` | Send message |
-| `Shift+Enter` | New line in input |
+
+### Audio Input
+
+| Gesture | Action |
+|---------|--------|
+| Hold mic button | Start recording |
+| Release mic button | Stop & transcribe |
+| Auto-stop at 15s | Max recording length |
 
 ---
 
 ## Future Work
 
-- **Audio Input:** Replace text input with STT (Speech-to-Text)
+- ~~**Audio Input:** Replace text input with STT (Speech-to-Text)~~ ✅ Implemented
+- ~~**Inter-Agent Communication:** Agents responding to each other~~ ✅ Implemented (3-turn workflow)
 - **Wave Parameters:** Convert responses to speaker control signals
 - **Agent Personalities:** Custom system prompts per agent
-- **Inter-Agent Communication:** Agents responding to each other
 - **TouchDesigner Integration:** Send events to visual system
+- **Audio Playback Sequencing:** Auto-play TTS audio in turn order
+- **Conversation Persistence:** Save/restore conversation history
