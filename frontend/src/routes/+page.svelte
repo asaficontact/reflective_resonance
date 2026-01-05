@@ -3,9 +3,9 @@
 	import { browser } from '$app/environment';
 	import { appStore } from '$lib/stores/app.svelte';
 	import { createMultiStream } from '$lib/utils/mock-responses';
-	import { createRealStream } from '$lib/utils/streaming';
+	import { createRealStream, type SlotDoneData, type SlotAudioData } from '$lib/utils/streaming';
 	import { KEYBOARD_SHORTCUTS, API_CONFIG } from '$lib/config/constants';
-	import type { SlotId, ErrorType } from '$lib/types';
+	import type { SlotId, ErrorType, TurnIndex, MessageKind } from '$lib/types';
 
 	import AgentPalette from '$lib/components/AgentPalette.svelte';
 	import SpeakerSlots from '$lib/components/SpeakerSlots.svelte';
@@ -16,12 +16,20 @@
 	// Track active stream for cleanup
 	let activeStream: { cancel: () => void } | null = null;
 
-	// Message ID map for streaming updates
-	let messageIds: Map<SlotId, string> = new Map();
+	// Message ID map for streaming updates (keyed by slotId-turnIndex-kind)
+	let messageIds: Map<string, string> = new Map();
+
+	// Generate message key for lookup
+	function getMessageKey(slotId: SlotId, turnIndex: TurnIndex, kind: MessageKind): string {
+		return `${slotId}-${turnIndex}-${kind}`;
+	}
 
 	// Handle sending a message to all assigned agents
 	function handleSendMessage(content: string) {
 		if (!appStore.canSend) return;
+
+		// Reset turn status for new workflow
+		appStore.resetTurnStatus();
 
 		// Add user message
 		appStore.addMessage({
@@ -38,30 +46,42 @@
 			agentId: slot.agentId!
 		}));
 
-		// Initialize empty messages for each slot
+		// Clear message IDs from previous run
 		messageIds.clear();
-		slotsToStream.forEach(({ slotId, agentId }) => {
-			const message = appStore.addMessage({
-				role: 'agent',
-				content: '',
-				slotId: slotId as SlotId,
-				agentId,
-				isStreaming: true
-			});
-			messageIds.set(slotId as SlotId, message.id);
+
+		// Set all slots to streaming
+		slotsToStream.forEach(({ slotId }) => {
 			appStore.setSlotStatus(slotId as SlotId, 'streaming');
 		});
 
-		// Streaming callbacks (shared by mock and real)
-		const streamCallbacks = {
+		// Legacy callbacks (for backwards compatibility with mock)
+		const legacyCallbacks = {
 			onToken: (slotId: number, token: string) => {
-				const messageId = messageIds.get(slotId as SlotId);
-				if (messageId) {
-					appStore.appendToMessage(messageId, token);
+				// Only handle for Turn 1 (legacy mode)
+				const key = getMessageKey(slotId as SlotId, 1, 'response');
+				let messageId = messageIds.get(key);
+
+				if (!messageId) {
+					// Create message if not exists
+					const slot = appStore.getSlot(slotId as SlotId);
+					const message = appStore.addMessage({
+						role: 'agent',
+						content: '',
+						slotId: slotId as SlotId,
+						agentId: slot?.agentId,
+						isStreaming: true,
+						turnIndex: 1,
+						kind: 'response'
+					});
+					messageId = message.id;
+					messageIds.set(key, messageId);
 				}
+
+				appStore.appendToMessage(messageId, token);
 			},
 			onSlotComplete: (slotId: number) => {
-				const messageId = messageIds.get(slotId as SlotId);
+				const key = getMessageKey(slotId as SlotId, 1, 'response');
+				const messageId = messageIds.get(key);
 				if (messageId) {
 					appStore.updateMessage(messageId, { isStreaming: false });
 				}
@@ -69,13 +89,6 @@
 				appStore.resetRetryCount(slotId as SlotId);
 			},
 			onSlotError: (slotId: number, error: ErrorType) => {
-				const messageId = messageIds.get(slotId as SlotId);
-				if (messageId) {
-					appStore.updateMessage(messageId, {
-						isStreaming: false,
-						content: `Error: ${getErrorMessage(error)}`
-					});
-				}
 				appStore.setSlotStatus(slotId as SlotId, 'error', error);
 				toast.error(`Slot ${slotId} error: ${getErrorMessage(error)}`);
 			},
@@ -85,17 +98,77 @@
 			}
 		};
 
+		// 3-Turn workflow callbacks
+		const workflowCallbacks = {
+			onSessionStart: (sessionId: string) => {
+				appStore.setCurrentSession(sessionId);
+			},
+			onTurnStart: (turnIndex: TurnIndex, _sessionId: string) => {
+				appStore.setTurnStatus(turnIndex, 'in_progress');
+			},
+			onTurnDone: (turnIndex: TurnIndex, _slotCount: number, _sessionId: string) => {
+				appStore.setTurnStatus(turnIndex, 'done');
+			},
+			onSlotDone: (data: SlotDoneData) => {
+				const key = getMessageKey(data.slotId, data.turnIndex, data.kind);
+
+				// Create or update message for this turn
+				let messageId = messageIds.get(key);
+				if (messageId) {
+					// Update existing message (include sessionId for Turn 1 messages created by onToken)
+					appStore.updateMessage(messageId, {
+						content: data.text,
+						voiceProfile: data.voiceProfile,
+						isStreaming: false,
+						targetSlotId: data.targetSlotId,
+						sessionId: data.sessionId,
+						turnIndex: data.turnIndex,
+						kind: data.kind
+					});
+				} else {
+					// Create new message
+					const message = appStore.addMessage({
+						role: 'agent',
+						content: data.text,
+						slotId: data.slotId,
+						agentId: data.agentId,
+						isStreaming: false,
+						sessionId: data.sessionId,
+						turnIndex: data.turnIndex,
+						kind: data.kind,
+						voiceProfile: data.voiceProfile,
+						targetSlotId: data.targetSlotId
+					});
+					messageIds.set(key, message.id);
+				}
+
+				// Mark slot as done after Turn 1
+				if (data.turnIndex === 1) {
+					appStore.setSlotStatus(data.slotId, 'done');
+					appStore.resetRetryCount(data.slotId);
+				}
+			},
+			onSlotAudio: (data: SlotAudioData) => {
+				const key = getMessageKey(data.slotId, data.turnIndex, data.kind);
+				const messageId = messageIds.get(key);
+				if (messageId) {
+					appStore.updateMessageAudioStatus(messageId, data.audioPath);
+				}
+			}
+		};
+
 		// Start streaming (mock or real based on config)
 		if (API_CONFIG.useMock) {
 			activeStream = createMultiStream({
 				slots: slotsToStream,
-				...streamCallbacks
+				...legacyCallbacks
 			});
 		} else {
 			activeStream = createRealStream({
 				message: content,
 				slots: slotsToStream,
-				...streamCallbacks
+				...legacyCallbacks,
+				...workflowCallbacks
 			});
 		}
 	}
@@ -111,6 +184,8 @@
 				return 'Rate limit exceeded. Please wait.';
 			case 'server_error':
 				return 'Server error. Please try again later.';
+			case 'tts_error':
+				return 'Text-to-speech error.';
 			default:
 				return 'An unexpected error occurred.';
 		}

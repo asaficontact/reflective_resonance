@@ -1,0 +1,985 @@
+"""3-Turn Workflow Orchestrator for Reflective Resonance.
+
+Implements the sequential turn execution:
+1. Turn 1 (Respond): All slots respond to user message in parallel
+2. Turn 2 (Comment): Each slot comments on exactly one peer response
+3. Turn 3 (Reply): Slots that received comments reply to them
+
+SSE events are emitted throughout for frontend consumption.
+"""
+
+import asyncio
+import logging
+import random
+from collections.abc import AsyncGenerator
+from typing import Any
+
+from sse_starlette.sse import ServerSentEvent
+
+from backend.agents import get_llm, get_model_for_agent
+from backend.config import settings
+from backend.conversations import get_or_create_conversation
+from backend.models import (
+    CommentSelection,
+    DoneEvent,
+    ErrorDetail,
+    ReceivedComment,
+    SlotAudioEvent,
+    SlotDoneEvent,
+    SlotErrorEvent,
+    SlotRequest,
+    SlotStartEvent,
+    Turn1Result,
+    Turn2Result,
+    Turn3Result,
+    TurnDoneEvent,
+    TurnStartEvent,
+    WorkflowState,
+    SpokenResponse,
+)
+from backend.prompts import render_turn1_prompt, render_turn2_prompt, render_turn3_prompt
+from backend.sessions import TTSSession
+from backend.tts import MultiVoiceAgentTTS
+
+logger = logging.getLogger(__name__)
+
+# Maximum comments any single slot can receive in Turn 3
+MAX_COMMENTS_PER_TARGET = 3
+
+
+# =============================================================================
+# Lazy TTS Singleton
+# =============================================================================
+
+_tts_client: MultiVoiceAgentTTS | None = None
+
+
+def get_tts() -> MultiVoiceAgentTTS:
+    """Get or create TTS client (lazy singleton)."""
+    global _tts_client
+    if _tts_client is None:
+        _tts_client = MultiVoiceAgentTTS()
+        logger.info("MultiVoiceAgentTTS initialized")
+    return _tts_client
+
+
+# =============================================================================
+# Error Mapping
+# =============================================================================
+
+
+def map_exception_to_error_type(e: Exception) -> str:
+    """Map exceptions to frontend ErrorType values."""
+    error_name = type(e).__name__.lower()
+
+    if "timeout" in error_name or isinstance(e, asyncio.TimeoutError):
+        return "timeout"
+    if "ratelimit" in error_name or "rate_limit" in error_name:
+        return "rate_limit"
+    if any(
+        term in error_name
+        for term in ["connection", "network", "dns", "socket", "refused"]
+    ):
+        return "network"
+    if isinstance(e, (ConnectionError, OSError)):
+        return "network"
+
+    return "server_error"
+
+
+# =============================================================================
+# Turn 1: Response
+# =============================================================================
+
+
+async def process_turn1_slot(
+    state: WorkflowState,
+    slot_id: int,
+    agent_id: str,
+    queue: asyncio.Queue[ServerSentEvent],
+) -> Turn1Result:
+    """Process Turn 1 for a single slot: respond to user message.
+
+    Args:
+        state: Workflow state with session and user_message
+        slot_id: The slot ID (1-6)
+        agent_id: The agent ID for this slot
+        queue: SSE event queue
+
+    Returns:
+        Turn1Result with success status and response data
+    """
+    session = state.session
+    session_id = session.session_id
+
+    try:
+        # Emit slot.start
+        await queue.put(
+            ServerSentEvent(
+                event="slot.start",
+                data=SlotStartEvent(
+                    sessionId=session_id,
+                    turnIndex=1,
+                    kind="response",
+                    slotId=slot_id,
+                    agentId=agent_id,
+                ).model_dump_json(),
+            )
+        )
+
+        # Get conversation and LLM
+        conv = get_or_create_conversation(slot_id)
+        llm = get_llm(agent_id)
+        model = get_model_for_agent(agent_id)
+
+        # Render prompt and add to conversation
+        prompt = render_turn1_prompt(state.user_message)
+        conv.add_user(prompt)
+
+        # Get structured response
+        response: SpokenResponse = await llm.complete_structured(
+            messages=conv.get_history(),
+            model=model,
+            response_model=SpokenResponse,
+            temperature=settings.temperature,
+        )
+
+        # Add to conversation history
+        conv.add_assistant(response.model_dump_json())
+
+        # Emit slot.done
+        await queue.put(
+            ServerSentEvent(
+                event="slot.done",
+                data=SlotDoneEvent(
+                    sessionId=session_id,
+                    turnIndex=1,
+                    kind="response",
+                    slotId=slot_id,
+                    agentId=agent_id,
+                    text=response.text,
+                    voiceProfile=response.voice_profile,
+                ).model_dump_json(),
+            )
+        )
+
+        logger.info(
+            f"Turn 1 Slot {slot_id} ({agent_id}) LLM done: "
+            f"voice={response.voice_profile}, text={len(response.text)} chars"
+        )
+
+        # Generate TTS
+        audio_path = None
+        relative_path = None
+        try:
+            tts = get_tts()
+            audio_path = session.get_turn1_audio_path(slot_id, agent_id, response.voice_profile)
+            relative_path = session.get_turn1_relative_path(slot_id, agent_id, response.voice_profile)
+
+            await asyncio.to_thread(
+                tts.generate_wav_to_file,
+                response.text,
+                response.voice_profile,
+                audio_path,
+            )
+
+            # Emit slot.audio
+            await queue.put(
+                ServerSentEvent(
+                    event="slot.audio",
+                    data=SlotAudioEvent(
+                        sessionId=session_id,
+                        turnIndex=1,
+                        kind="response",
+                        slotId=slot_id,
+                        agentId=agent_id,
+                        voiceProfile=response.voice_profile,
+                        audioPath=relative_path,
+                    ).model_dump_json(),
+                )
+            )
+
+            # Add to manifest
+            session.add_turn1_entry(
+                slot_id=slot_id,
+                agent_id=agent_id,
+                voice_profile=response.voice_profile,
+                text=response.text,
+                audio_path=relative_path,
+            )
+
+            logger.info(f"Turn 1 Slot {slot_id} ({agent_id}) TTS done: {audio_path.name}")
+
+        except Exception as tts_error:
+            logger.error(f"Turn 1 Slot {slot_id} ({agent_id}) TTS error: {tts_error}")
+            await queue.put(
+                ServerSentEvent(
+                    event="slot.error",
+                    data=SlotErrorEvent(
+                        sessionId=session_id,
+                        turnIndex=1,
+                        kind="response",
+                        slotId=slot_id,
+                        agentId=agent_id,
+                        error=ErrorDetail(type="tts_error", message=str(tts_error)),
+                    ).model_dump_json(),
+                )
+            )
+
+        return Turn1Result(
+            slot_id=slot_id,
+            agent_id=agent_id,
+            text=response.text,
+            voice_profile=response.voice_profile,
+            success=True,
+            audio_path=str(relative_path) if relative_path else None,
+        )
+
+    except Exception as e:
+        error_type = map_exception_to_error_type(e)
+        logger.error(f"Turn 1 Slot {slot_id} ({agent_id}) error: {error_type} - {e}")
+
+        await queue.put(
+            ServerSentEvent(
+                event="slot.error",
+                data=SlotErrorEvent(
+                    sessionId=session_id,
+                    turnIndex=1,
+                    kind="response",
+                    slotId=slot_id,
+                    agentId=agent_id,
+                    error=ErrorDetail(type=error_type, message=str(e)),
+                ).model_dump_json(),
+            )
+        )
+
+        return Turn1Result(
+            slot_id=slot_id,
+            agent_id=agent_id,
+            text="",
+            voice_profile="",
+            success=False,
+        )
+
+
+async def execute_turn1(
+    state: WorkflowState,
+    queue: asyncio.Queue[ServerSentEvent],
+) -> None:
+    """Execute Turn 1 for all slots in parallel.
+
+    Args:
+        state: Workflow state (updated with turn1_results)
+        queue: SSE event queue
+    """
+    session_id = state.session.session_id
+
+    # Emit turn.start
+    await queue.put(
+        ServerSentEvent(
+            event="turn.start",
+            data=TurnStartEvent(sessionId=session_id, turnIndex=1).model_dump_json(),
+        )
+    )
+
+    # Process all slots in parallel
+    tasks = [
+        asyncio.create_task(
+            process_turn1_slot(state, slot.slotId, slot.agentId, queue)
+        )
+        for slot in state.slots
+    ]
+
+    results = await asyncio.gather(*tasks)
+
+    # Store results
+    for result in results:
+        state.turn1_results[result.slot_id] = result
+
+    # Count successful slots
+    successful_count = sum(1 for r in results if r.success)
+
+    # Emit turn.done
+    await queue.put(
+        ServerSentEvent(
+            event="turn.done",
+            data=TurnDoneEvent(
+                sessionId=session_id,
+                turnIndex=1,
+                slotCount=successful_count,
+            ).model_dump_json(),
+        )
+    )
+
+    logger.info(f"Turn 1 complete: {successful_count}/{len(state.slots)} slots succeeded")
+
+
+# =============================================================================
+# Turn 2: Comment
+# =============================================================================
+
+
+def build_peer_responses(state: WorkflowState, exclude_slot_id: int) -> list[dict]:
+    """Build list of peer responses for Turn 2 prompt.
+
+    Excludes the requesting slot and any failed slots.
+
+    Args:
+        state: Workflow state with turn1_results
+        exclude_slot_id: Slot to exclude (self)
+
+    Returns:
+        List of peer responses with slotId, agentId, text
+    """
+    peers = []
+    for slot_id, result in state.turn1_results.items():
+        if slot_id != exclude_slot_id and result.success:
+            peers.append({
+                "slotId": result.slot_id,
+                "agentId": result.agent_id,
+                "text": result.text,
+            })
+
+    # Shuffle to reduce position bias
+    random.shuffle(peers)
+    return peers
+
+
+async def process_turn2_slot(
+    state: WorkflowState,
+    slot_id: int,
+    agent_id: str,
+    queue: asyncio.Queue[ServerSentEvent],
+) -> Turn2Result:
+    """Process Turn 2 for a single slot: comment on a peer response.
+
+    Args:
+        state: Workflow state with turn1_results
+        slot_id: The slot ID (1-6)
+        agent_id: The agent ID for this slot
+        queue: SSE event queue
+
+    Returns:
+        Turn2Result with comment data
+    """
+    session = state.session
+    session_id = session.session_id
+
+    try:
+        # Emit slot.start
+        await queue.put(
+            ServerSentEvent(
+                event="slot.start",
+                data=SlotStartEvent(
+                    sessionId=session_id,
+                    turnIndex=2,
+                    kind="comment",
+                    slotId=slot_id,
+                    agentId=agent_id,
+                ).model_dump_json(),
+            )
+        )
+
+        # Get conversation and LLM
+        conv = get_or_create_conversation(slot_id)
+        llm = get_llm(agent_id)
+        model = get_model_for_agent(agent_id)
+
+        # Build peer responses (excluding self and failed slots)
+        peer_responses = build_peer_responses(state, slot_id)
+
+        # Render prompt
+        prompt = render_turn2_prompt(slot_id, agent_id, peer_responses)
+        conv.add_user(prompt)
+
+        # Get structured response
+        response: CommentSelection = await llm.complete_structured(
+            messages=conv.get_history(),
+            model=model,
+            response_model=CommentSelection,
+            temperature=settings.temperature,
+        )
+
+        # Add to conversation history
+        conv.add_assistant(response.model_dump_json())
+
+        # Emit slot.done
+        await queue.put(
+            ServerSentEvent(
+                event="slot.done",
+                data=SlotDoneEvent(
+                    sessionId=session_id,
+                    turnIndex=2,
+                    kind="comment",
+                    slotId=slot_id,
+                    agentId=agent_id,
+                    text=response.comment,
+                    voiceProfile=response.voice_profile,
+                    targetSlotId=response.targetSlotId,
+                ).model_dump_json(),
+            )
+        )
+
+        logger.info(
+            f"Turn 2 Slot {slot_id} ({agent_id}) LLM done: "
+            f"target={response.targetSlotId}, voice={response.voice_profile}"
+        )
+
+        # Generate TTS
+        audio_path = None
+        relative_path = None
+        try:
+            tts = get_tts()
+            audio_path = session.get_turn2_audio_path(
+                slot_id, response.targetSlotId, agent_id, response.voice_profile
+            )
+            relative_path = session.get_turn2_relative_path(
+                slot_id, response.targetSlotId, agent_id, response.voice_profile
+            )
+
+            await asyncio.to_thread(
+                tts.generate_wav_to_file,
+                response.comment,
+                response.voice_profile,
+                audio_path,
+            )
+
+            # Emit slot.audio
+            await queue.put(
+                ServerSentEvent(
+                    event="slot.audio",
+                    data=SlotAudioEvent(
+                        sessionId=session_id,
+                        turnIndex=2,
+                        kind="comment",
+                        slotId=slot_id,
+                        agentId=agent_id,
+                        voiceProfile=response.voice_profile,
+                        audioPath=relative_path,
+                    ).model_dump_json(),
+                )
+            )
+
+            # Add to manifest
+            session.add_turn2_entry(
+                slot_id=slot_id,
+                agent_id=agent_id,
+                target_slot_id=response.targetSlotId,
+                voice_profile=response.voice_profile,
+                comment=response.comment,
+                audio_path=relative_path,
+            )
+
+            logger.info(f"Turn 2 Slot {slot_id} ({agent_id}) TTS done: {audio_path.name}")
+
+        except Exception as tts_error:
+            logger.error(f"Turn 2 Slot {slot_id} ({agent_id}) TTS error: {tts_error}")
+            await queue.put(
+                ServerSentEvent(
+                    event="slot.error",
+                    data=SlotErrorEvent(
+                        sessionId=session_id,
+                        turnIndex=2,
+                        kind="comment",
+                        slotId=slot_id,
+                        agentId=agent_id,
+                        error=ErrorDetail(type="tts_error", message=str(tts_error)),
+                    ).model_dump_json(),
+                )
+            )
+
+        return Turn2Result(
+            slot_id=slot_id,
+            agent_id=agent_id,
+            target_slot_id=response.targetSlotId,
+            comment=response.comment,
+            voice_profile=response.voice_profile,
+            success=True,
+            audio_path=str(relative_path) if relative_path else None,
+        )
+
+    except Exception as e:
+        error_type = map_exception_to_error_type(e)
+        logger.error(f"Turn 2 Slot {slot_id} ({agent_id}) error: {error_type} - {e}")
+
+        await queue.put(
+            ServerSentEvent(
+                event="slot.error",
+                data=SlotErrorEvent(
+                    sessionId=session_id,
+                    turnIndex=2,
+                    kind="comment",
+                    slotId=slot_id,
+                    agentId=agent_id,
+                    error=ErrorDetail(type=error_type, message=str(e)),
+                ).model_dump_json(),
+            )
+        )
+
+        return Turn2Result(
+            slot_id=slot_id,
+            agent_id=agent_id,
+            target_slot_id=0,
+            comment="",
+            voice_profile="",
+            success=False,
+        )
+
+
+def route_comments(state: WorkflowState) -> None:
+    """Route Turn 2 comments to their targets, capping at MAX_COMMENTS_PER_TARGET.
+
+    Populates state.comments_by_target with ReceivedComment objects.
+    """
+    # Group comments by target
+    comments_by_target: dict[int, list[ReceivedComment]] = {}
+
+    for result in state.turn2_results.values():
+        if not result.success:
+            continue
+
+        target_id = result.target_slot_id
+        if target_id not in comments_by_target:
+            comments_by_target[target_id] = []
+
+        comments_by_target[target_id].append(
+            ReceivedComment(
+                from_slot_id=result.slot_id,
+                from_agent_id=result.agent_id,
+                comment=result.comment,
+            )
+        )
+
+    # Cap comments per target
+    for target_id, comments in comments_by_target.items():
+        if len(comments) > MAX_COMMENTS_PER_TARGET:
+            # Randomly select which comments to keep
+            comments_by_target[target_id] = random.sample(comments, MAX_COMMENTS_PER_TARGET)
+            logger.info(
+                f"Slot {target_id} received {len(comments)} comments, "
+                f"capped to {MAX_COMMENTS_PER_TARGET}"
+            )
+
+    state.comments_by_target = comments_by_target
+
+
+async def execute_turn2(
+    state: WorkflowState,
+    queue: asyncio.Queue[ServerSentEvent],
+) -> None:
+    """Execute Turn 2 for all eligible slots in parallel.
+
+    Only slots that succeeded in Turn 1 participate.
+
+    Args:
+        state: Workflow state (updated with turn2_results and comments_by_target)
+        queue: SSE event queue
+    """
+    session_id = state.session.session_id
+
+    # Filter to slots with successful Turn 1
+    eligible_slots = [
+        slot for slot in state.slots
+        if state.turn1_results.get(slot.slotId, Turn1Result(0, "", "", "", False)).success
+    ]
+
+    if not eligible_slots:
+        logger.warning("Turn 2: No eligible slots (all Turn 1 failed)")
+        return
+
+    # Emit turn.start
+    await queue.put(
+        ServerSentEvent(
+            event="turn.start",
+            data=TurnStartEvent(sessionId=session_id, turnIndex=2).model_dump_json(),
+        )
+    )
+
+    # Process all eligible slots in parallel
+    tasks = [
+        asyncio.create_task(
+            process_turn2_slot(state, slot.slotId, slot.agentId, queue)
+        )
+        for slot in eligible_slots
+    ]
+
+    results = await asyncio.gather(*tasks)
+
+    # Store results
+    for result in results:
+        state.turn2_results[result.slot_id] = result
+
+    # Route comments to targets
+    route_comments(state)
+
+    # Count successful slots
+    successful_count = sum(1 for r in results if r.success)
+
+    # Emit turn.done
+    await queue.put(
+        ServerSentEvent(
+            event="turn.done",
+            data=TurnDoneEvent(
+                sessionId=session_id,
+                turnIndex=2,
+                slotCount=successful_count,
+            ).model_dump_json(),
+        )
+    )
+
+    logger.info(f"Turn 2 complete: {successful_count}/{len(eligible_slots)} slots succeeded")
+
+
+# =============================================================================
+# Turn 3: Reply
+# =============================================================================
+
+
+async def process_turn3_slot(
+    state: WorkflowState,
+    slot_id: int,
+    agent_id: str,
+    received_comments: list[ReceivedComment],
+    queue: asyncio.Queue[ServerSentEvent],
+) -> Turn3Result:
+    """Process Turn 3 for a single slot: reply to received comments.
+
+    Args:
+        state: Workflow state
+        slot_id: The slot ID (1-6)
+        agent_id: The agent ID for this slot
+        received_comments: Comments received by this slot
+        queue: SSE event queue
+
+    Returns:
+        Turn3Result with reply data
+    """
+    session = state.session
+    session_id = session.session_id
+
+    try:
+        # Emit slot.start
+        await queue.put(
+            ServerSentEvent(
+                event="slot.start",
+                data=SlotStartEvent(
+                    sessionId=session_id,
+                    turnIndex=3,
+                    kind="reply",
+                    slotId=slot_id,
+                    agentId=agent_id,
+                ).model_dump_json(),
+            )
+        )
+
+        # Get conversation and LLM
+        conv = get_or_create_conversation(slot_id)
+        llm = get_llm(agent_id)
+        model = get_model_for_agent(agent_id)
+
+        # Get original Turn 1 response
+        turn1_result = state.turn1_results[slot_id]
+        original_response = turn1_result.text
+
+        # Format comments for prompt
+        comments_list = [
+            {
+                "fromSlotId": c.from_slot_id,
+                "fromAgentId": c.from_agent_id,
+                "comment": c.comment,
+            }
+            for c in received_comments
+        ]
+
+        # Render prompt
+        prompt = render_turn3_prompt(slot_id, agent_id, original_response, comments_list)
+        conv.add_user(prompt)
+
+        # Get structured response
+        response: SpokenResponse = await llm.complete_structured(
+            messages=conv.get_history(),
+            model=model,
+            response_model=SpokenResponse,
+            temperature=settings.temperature,
+        )
+
+        # Add to conversation history
+        conv.add_assistant(response.model_dump_json())
+
+        # Emit slot.done
+        await queue.put(
+            ServerSentEvent(
+                event="slot.done",
+                data=SlotDoneEvent(
+                    sessionId=session_id,
+                    turnIndex=3,
+                    kind="reply",
+                    slotId=slot_id,
+                    agentId=agent_id,
+                    text=response.text,
+                    voiceProfile=response.voice_profile,
+                ).model_dump_json(),
+            )
+        )
+
+        logger.info(
+            f"Turn 3 Slot {slot_id} ({agent_id}) LLM done: "
+            f"voice={response.voice_profile}, text={len(response.text)} chars"
+        )
+
+        # Generate TTS
+        audio_path = None
+        relative_path = None
+        try:
+            tts = get_tts()
+            audio_path = session.get_turn3_audio_path(slot_id, agent_id, response.voice_profile)
+            relative_path = session.get_turn3_relative_path(slot_id, agent_id, response.voice_profile)
+
+            await asyncio.to_thread(
+                tts.generate_wav_to_file,
+                response.text,
+                response.voice_profile,
+                audio_path,
+            )
+
+            # Emit slot.audio
+            await queue.put(
+                ServerSentEvent(
+                    event="slot.audio",
+                    data=SlotAudioEvent(
+                        sessionId=session_id,
+                        turnIndex=3,
+                        kind="reply",
+                        slotId=slot_id,
+                        agentId=agent_id,
+                        voiceProfile=response.voice_profile,
+                        audioPath=relative_path,
+                    ).model_dump_json(),
+                )
+            )
+
+            # Add to manifest
+            session.add_turn3_entry(
+                slot_id=slot_id,
+                agent_id=agent_id,
+                voice_profile=response.voice_profile,
+                text=response.text,
+                audio_path=relative_path,
+                received_comments=comments_list,
+            )
+
+            logger.info(f"Turn 3 Slot {slot_id} ({agent_id}) TTS done: {audio_path.name}")
+
+        except Exception as tts_error:
+            logger.error(f"Turn 3 Slot {slot_id} ({agent_id}) TTS error: {tts_error}")
+            await queue.put(
+                ServerSentEvent(
+                    event="slot.error",
+                    data=SlotErrorEvent(
+                        sessionId=session_id,
+                        turnIndex=3,
+                        kind="reply",
+                        slotId=slot_id,
+                        agentId=agent_id,
+                        error=ErrorDetail(type="tts_error", message=str(tts_error)),
+                    ).model_dump_json(),
+                )
+            )
+
+        return Turn3Result(
+            slot_id=slot_id,
+            agent_id=agent_id,
+            text=response.text,
+            voice_profile=response.voice_profile,
+            success=True,
+            audio_path=str(relative_path) if relative_path else None,
+        )
+
+    except Exception as e:
+        error_type = map_exception_to_error_type(e)
+        logger.error(f"Turn 3 Slot {slot_id} ({agent_id}) error: {error_type} - {e}")
+
+        await queue.put(
+            ServerSentEvent(
+                event="slot.error",
+                data=SlotErrorEvent(
+                    sessionId=session_id,
+                    turnIndex=3,
+                    kind="reply",
+                    slotId=slot_id,
+                    agentId=agent_id,
+                    error=ErrorDetail(type=error_type, message=str(e)),
+                ).model_dump_json(),
+            )
+        )
+
+        return Turn3Result(
+            slot_id=slot_id,
+            agent_id=agent_id,
+            text="",
+            voice_profile="",
+            success=False,
+        )
+
+
+async def execute_turn3(
+    state: WorkflowState,
+    queue: asyncio.Queue[ServerSentEvent],
+) -> None:
+    """Execute Turn 3 for slots that received comments.
+
+    Only slots that received at least 1 comment participate.
+
+    Args:
+        state: Workflow state (updated with turn3_results)
+        queue: SSE event queue
+    """
+    session_id = state.session.session_id
+
+    # Find slots that received comments
+    slots_with_comments = []
+    for slot in state.slots:
+        if slot.slotId in state.comments_by_target:
+            comments = state.comments_by_target[slot.slotId]
+            if comments:
+                slots_with_comments.append((slot, comments))
+
+    if not slots_with_comments:
+        logger.info("Turn 3: No slots received comments, skipping")
+        return
+
+    # Emit turn.start
+    await queue.put(
+        ServerSentEvent(
+            event="turn.start",
+            data=TurnStartEvent(sessionId=session_id, turnIndex=3).model_dump_json(),
+        )
+    )
+
+    # Process all slots with comments in parallel
+    tasks = [
+        asyncio.create_task(
+            process_turn3_slot(state, slot.slotId, slot.agentId, comments, queue)
+        )
+        for slot, comments in slots_with_comments
+    ]
+
+    results = await asyncio.gather(*tasks)
+
+    # Store results
+    for result in results:
+        state.turn3_results[result.slot_id] = result
+
+    # Count successful slots
+    successful_count = sum(1 for r in results if r.success)
+
+    # Emit turn.done
+    await queue.put(
+        ServerSentEvent(
+            event="turn.done",
+            data=TurnDoneEvent(
+                sessionId=session_id,
+                turnIndex=3,
+                slotCount=successful_count,
+            ).model_dump_json(),
+        )
+    )
+
+    logger.info(f"Turn 3 complete: {successful_count}/{len(slots_with_comments)} slots succeeded")
+
+
+# =============================================================================
+# Main Workflow
+# =============================================================================
+
+
+async def run_three_turn_workflow(
+    message: str,
+    slots: list[SlotRequest],
+) -> AsyncGenerator[ServerSentEvent, None]:
+    """Run the complete 3-turn workflow.
+
+    Args:
+        message: User message to broadcast
+        slots: List of slot requests
+
+    Yields:
+        SSE events for all turns
+    """
+    # Create session
+    session = TTSSession.create()
+    logger.info(f"Created TTS session: {session.session_id}")
+
+    # Initialize workflow state
+    state = WorkflowState(
+        session=session,
+        slots=slots,
+        user_message=message,
+    )
+
+    # Create event queue
+    queue: asyncio.Queue[ServerSentEvent] = asyncio.Queue()
+
+    # Run workflow in background task
+    async def run_workflow():
+        try:
+            # Turn 1: All slots respond to user
+            await execute_turn1(state, queue)
+
+            # Turn 2: Each slot comments on one peer
+            await execute_turn2(state, queue)
+
+            # Turn 3: Slots with comments reply
+            await execute_turn3(state, queue)
+
+            # Write manifest
+            manifest_path = session.write_manifest()
+            logger.info(f"Manifest written: {manifest_path}")
+
+        except Exception as e:
+            logger.error(f"Workflow error: {e}")
+        finally:
+            # Signal completion
+            await queue.put(None)
+
+    # Start workflow
+    asyncio.create_task(run_workflow())
+
+    # Track completion stats
+    completed_slots = 0
+    counted_slots: set[int] = set()
+
+    # Yield events as they arrive
+    while True:
+        event = await queue.get()
+
+        if event is None:
+            break
+
+        yield event
+
+        # Track slot completions (for final event)
+        if event.event == "slot.done":
+            import json
+            data = json.loads(event.data)
+            slot_id = data.get("slotId")
+            turn_index = data.get("turnIndex")
+            # Only count Turn 1 completions for total
+            if turn_index == 1 and slot_id not in counted_slots:
+                counted_slots.add(slot_id)
+                completed_slots += 1
+
+    # Emit final done event
+    yield ServerSentEvent(
+        event="done",
+        data=DoneEvent(
+            sessionId=session.session_id,
+            completedSlots=completed_slots,
+            turns=3,
+        ).model_dump_json(),
+    )
+
+    logger.info(
+        f"Workflow complete: {completed_slots}/{len(slots)} slots, "
+        f"session={session.session_id}"
+    )

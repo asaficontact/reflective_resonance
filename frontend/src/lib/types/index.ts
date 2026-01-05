@@ -10,6 +10,10 @@ export type AgentId =
 // Speaker slot identifiers (1-6)
 export type SlotId = 1 | 2 | 3 | 4 | 5 | 6;
 
+// 3-turn workflow types
+export type TurnIndex = 1 | 2 | 3;
+export type MessageKind = 'response' | 'comment' | 'reply';
+
 // Slot status during operation
 export type SlotStatus = 'idle' | 'streaming' | 'done' | 'error';
 
@@ -34,7 +38,7 @@ export interface Slot {
 	retryCount: number;
 }
 
-// Message in the conversation
+// Message in the conversation (extended for 3-turn workflow)
 export interface Message {
 	id: string;
 	role: 'user' | 'agent';
@@ -43,6 +47,26 @@ export interface Message {
 	agentId?: AgentId;
 	timestamp: number;
 	isStreaming?: boolean;
+
+	// 3-turn workflow fields
+	sessionId?: string;
+	turnIndex?: TurnIndex;
+	kind?: MessageKind;
+	targetSlotId?: SlotId; // Turn 2: which slot this comment is directed at
+	voiceProfile?: string;
+	audioPath?: string;
+	audioReady?: boolean;
+}
+
+// Turn status for tracking workflow progress
+export type TurnStatus = 'pending' | 'in_progress' | 'done';
+
+// Slot turn data (what a slot did/received in each turn)
+export interface SlotTurnData {
+	turn1?: Message; // Response
+	turn2?: Message; // Comment made
+	turn3?: Message; // Reply
+	receivedComments?: Message[]; // Comments received from others (for T3 context)
 }
 
 // Streaming response chunk

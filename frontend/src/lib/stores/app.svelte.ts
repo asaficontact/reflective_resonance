@@ -1,5 +1,16 @@
 import { INITIAL_SLOTS, CONFIG } from '$lib/config/constants';
-import type { AgentId, Message, PersistedState, Slot, SlotId, SlotStatus, ErrorType } from '$lib/types';
+import type {
+	AgentId,
+	Message,
+	PersistedState,
+	Slot,
+	SlotId,
+	SlotStatus,
+	ErrorType,
+	TurnIndex,
+	TurnStatus,
+	SlotTurnData
+} from '$lib/types';
 import { browser } from '$app/environment';
 
 // Generate unique message IDs
@@ -16,6 +27,15 @@ function createAppStore() {
 	let inputValue = $state('');
 	let isSending = $state(false);
 	let isOnline = $state(browser ? navigator.onLine : true);
+
+	// 3-turn workflow state
+	let currentSessionId = $state<string | null>(null);
+	let currentTurnIndex = $state<TurnIndex | null>(null);
+	let turnStatus = $state<Record<TurnIndex, TurnStatus>>({
+		1: 'pending',
+		2: 'pending',
+		3: 'pending'
+	});
 
 	// === Derived State ===
 	const assignedSlots = $derived(slots.filter((s) => s.agentId !== null));
@@ -163,6 +183,93 @@ function createAppStore() {
 		return slotMessages[slotMessages.length - 1];
 	}
 
+	// === 3-Turn Workflow Methods ===
+
+	function setCurrentSession(sessionId: string | null): void {
+		currentSessionId = sessionId;
+	}
+
+	function setTurnStatus(turnIndex: TurnIndex, status: TurnStatus): void {
+		turnStatus[turnIndex] = status;
+		if (status === 'in_progress') {
+			currentTurnIndex = turnIndex;
+		}
+		// Trigger reactivity
+		turnStatus = { ...turnStatus };
+	}
+
+	function resetTurnStatus(): void {
+		turnStatus = {
+			1: 'pending',
+			2: 'pending',
+			3: 'pending'
+		};
+		currentTurnIndex = null;
+	}
+
+	function getTurnsForSlot(slotId: SlotId): SlotTurnData {
+		const sessionMessages = currentSessionId
+			? messages.filter((m) => m.sessionId === currentSessionId && m.slotId === slotId)
+			: messages.filter((m) => m.slotId === slotId);
+
+		const turn1 = sessionMessages.find((m) => m.turnIndex === 1 && m.kind === 'response');
+		const turn2 = sessionMessages.find((m) => m.turnIndex === 2 && m.kind === 'comment');
+		const turn3 = sessionMessages.find((m) => m.turnIndex === 3 && m.kind === 'reply');
+
+		// Find comments received by this slot (for context)
+		const receivedComments = currentSessionId
+			? messages.filter(
+					(m) =>
+						m.sessionId === currentSessionId &&
+						m.turnIndex === 2 &&
+						m.kind === 'comment' &&
+						m.targetSlotId === slotId
+				)
+			: [];
+
+		return {
+			turn1,
+			turn2,
+			turn3,
+			receivedComments
+		};
+	}
+
+	function getReceivedComments(slotId: SlotId): Message[] {
+		return currentSessionId
+			? messages.filter(
+					(m) =>
+						m.sessionId === currentSessionId &&
+						m.turnIndex === 2 &&
+						m.kind === 'comment' &&
+						m.targetSlotId === slotId
+				)
+			: [];
+	}
+
+	function updateMessageAudioStatus(messageId: string, audioPath: string): void {
+		const messageIndex = messages.findIndex((m) => m.id === messageId);
+		if (messageIndex !== -1) {
+			messages[messageIndex] = {
+				...messages[messageIndex],
+				audioPath,
+				audioReady: true
+			};
+			messages = [...messages];
+		}
+	}
+
+	function findMessageByTurn(
+		slotId: SlotId,
+		turnIndex: TurnIndex,
+		sessionId?: string
+	): Message | undefined {
+		const session = sessionId || currentSessionId;
+		return messages.find(
+			(m) => m.slotId === slotId && m.turnIndex === turnIndex && m.sessionId === session
+		);
+	}
+
 	// === Persistence ===
 	function persistState(): void {
 		if (!browser) return;
@@ -224,6 +331,17 @@ function createAppStore() {
 			return isOnline;
 		},
 
+		// 3-turn workflow state (getters)
+		get currentSessionId() {
+			return currentSessionId;
+		},
+		get currentTurnIndex() {
+			return currentTurnIndex;
+		},
+		get turnStatus() {
+			return turnStatus;
+		},
+
 		// Derived state (getters)
 		get assignedSlots() {
 			return assignedSlots;
@@ -259,7 +377,16 @@ function createAppStore() {
 		getMessagesForSlot,
 		getLatestMessageForSlot,
 		loadPersistedState,
-		clearPersistedState
+		clearPersistedState,
+
+		// 3-turn workflow actions
+		setCurrentSession,
+		setTurnStatus,
+		resetTurnStatus,
+		getTurnsForSlot,
+		getReceivedComments,
+		updateMessageAudioStatus,
+		findMessageByTurn
 	};
 }
 
