@@ -10,7 +10,7 @@
 	import AgentPalette from '$lib/components/AgentPalette.svelte';
 	import SpeakerSlots from '$lib/components/SpeakerSlots.svelte';
 	import ResponsesPanel from '$lib/components/ResponsesPanel.svelte';
-	import ChatDock from '$lib/components/ChatDock.svelte';
+	import AudioInputDock from '$lib/components/AudioInputDock.svelte';
 	import { Toaster, toast } from 'svelte-sonner';
 
 	// Track active stream for cleanup
@@ -26,7 +26,13 @@
 
 	// Handle sending a message to all assigned agents
 	function handleSendMessage(content: string) {
-		if (!appStore.canSend) return;
+		// Check if we can send (either via input field or direct content like audio transcript)
+		const canSendDirect = content.trim().length > 0 &&
+			appStore.assignedSlots.length > 0 &&
+			!appStore.isSending &&
+			appStore.isOnline;
+
+		if (!canSendDirect) return;
 
 		// Reset turn status for new workflow
 		appStore.resetTurnStatus();
@@ -266,7 +272,7 @@
 
 	<main class="main-content">
 		<SpeakerSlots />
-		<ChatDock onsubmit={handleSendMessage} />
+		<AudioInputDock ontranscript={handleSendMessage} />
 	</main>
 
 	<ResponsesPanel />

@@ -3,7 +3,7 @@
 import logging
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sse_starlette.sse import EventSourceResponse
@@ -18,6 +18,7 @@ from backend.models import (
     ResetResponse,
 )
 from backend.streaming import broadcast_chat
+from backend.stt import STTResponse, STTSession, ScribeError, get_scribe_client
 
 # =============================================================================
 # Logging Configuration
@@ -104,6 +105,129 @@ async def reset() -> ResetResponse:
     cleared = reset_all_conversations()
     logger.info(f"Reset conversations for slots: {cleared}")
     return ResetResponse(status="ok", clearedSlots=cleared)
+
+
+# =============================================================================
+# Speech-to-Text (STT) Endpoint
+# =============================================================================
+
+# MIME type to file extension mapping
+MIME_TO_EXT = {
+    "audio/webm": "webm",
+    "audio/ogg": "ogg",
+    "audio/wav": "wav",
+    "audio/wave": "wav",
+    "audio/x-wav": "wav",
+    "audio/mp3": "mp3",
+    "audio/mpeg": "mp3",
+    "audio/mp4": "m4a",
+    "audio/m4a": "m4a",
+}
+
+MAX_FILE_SIZE = 25 * 1024 * 1024  # 25MB limit
+
+
+@app.post("/v1/stt", response_model=STTResponse)
+async def speech_to_text(
+    file: UploadFile = File(...),
+    language_code: str = Form("en"),  # Default to English
+) -> STTResponse:
+    """Transcribe uploaded audio using ElevenLabs Scribe v1.
+
+    This endpoint accepts an audio file upload, transcribes it using
+    ElevenLabs Scribe v1, and returns the transcript along with metadata.
+
+    All audio files and transcripts are stored in:
+        artifacts/stt/sessions/<stt_session_id>/
+
+    Args:
+        file: Audio file (webm, ogg, wav, mp3, m4a supported)
+        language_code: Optional language code (e.g., "en"). Auto-detect if omitted.
+
+    Returns:
+        STTResponse with transcript, session ID, and file paths
+
+    Raises:
+        413: File too large (>25MB)
+        422: No speech detected
+        502: Transcription service error
+    """
+    # Determine file extension from content type
+    content_type = file.content_type or "audio/webm"
+    ext = MIME_TO_EXT.get(content_type, "webm")
+
+    logger.info(f"STT request: content_type={content_type}, ext={ext}")
+
+    # Read file and validate size
+    audio_bytes = await file.read()
+    file_size = len(audio_bytes)
+
+    if file_size > MAX_FILE_SIZE:
+        raise HTTPException(413, f"File too large ({file_size} bytes). Max: 25MB")
+
+    # Create session and save input audio
+    session = STTSession.create()
+    input_path = session.save_input_audio(audio_bytes, ext)
+
+    logger.info(
+        f"STT session created: session_id={session.session_id}, "
+        f"input_path={input_path}, size={file_size}"
+    )
+
+    # Transcribe using Scribe
+    try:
+        client = get_scribe_client()
+        result = await client.transcribe(input_path, language_code)
+    except ScribeError as e:
+        logger.error(f"Scribe error for session {session.session_id}: {e}")
+        raise HTTPException(502, "Transcription service error")
+    except Exception as e:
+        logger.error(f"Unexpected STT error for session {session.session_id}: {e}")
+        raise HTTPException(500, "Internal server error")
+
+    # Extract transcript
+    transcript = result.get("text", "").strip()
+    if not transcript:
+        raise HTTPException(422, "No speech detected in audio")
+
+    # Save artifacts
+    session.write_transcript(result, transcript)
+    session.write_metadata(
+        mime_type=content_type,
+        duration_ms=0,  # Could estimate from file size if needed
+        size_bytes=file_size,
+    )
+
+    logger.info(
+        f"STT complete: session_id={session.session_id}, "
+        f"transcript_length={len(transcript)}"
+    )
+
+    # Build response with word timings if available
+    words = None
+    if "words" in result and result["words"]:
+        from backend.stt.models import WordTiming
+
+        words = [
+            WordTiming(
+                text=w.get("text", ""),
+                start=w.get("start", 0.0),
+                end=w.get("end", 0.0),
+                type=w.get("type", "word"),
+            )
+            for w in result["words"]
+        ]
+
+    return STTResponse(
+        stt_session_id=session.session_id,
+        transcript=transcript,
+        audio_path=session.get_input_relative_path(ext),
+        transcript_path=session.get_transcript_relative_path(),
+        duration_ms=0,
+        mime_type=content_type,
+        words=words,
+        language_code=result.get("language_code"),
+    )
 
 
 # =============================================================================
