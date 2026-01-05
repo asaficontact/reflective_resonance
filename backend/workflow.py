@@ -40,6 +40,7 @@ from backend.models import (
 from backend.prompts import render_turn1_prompt, render_turn2_prompt, render_turn3_prompt
 from backend.sessions import TTSSession
 from backend.tts import MultiVoiceAgentTTS
+from backend.waves import DecomposeJob, get_worker_pool, tts_path_to_waves_dir
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +62,47 @@ def get_tts() -> MultiVoiceAgentTTS:
         _tts_client = MultiVoiceAgentTTS()
         logger.info("MultiVoiceAgentTTS initialized")
     return _tts_client
+
+
+# =============================================================================
+# Wave Decomposition Helper
+# =============================================================================
+
+
+def _submit_decomposition_job(
+    audio_path: "Path",
+    session_id: str,
+    turn_index: int,
+) -> None:
+    """Submit a decomposition job (non-blocking, best-effort).
+
+    Called after TTS completes and slot.audio is emitted.
+    Failures are logged but do not affect the workflow.
+
+    Args:
+        audio_path: Absolute path to the TTS WAV file
+        session_id: The workflow session ID
+        turn_index: Turn number (1, 2, or 3)
+    """
+    if not settings.waves_enabled:
+        return
+
+    try:
+        from pathlib import Path
+
+        output_dir = tts_path_to_waves_dir(audio_path, session_id, turn_index)
+        job = DecomposeJob(
+            session_id=session_id,
+            turn_index=turn_index,
+            input_path=Path(audio_path) if not isinstance(audio_path, Path) else audio_path,
+            output_dir=output_dir,
+        )
+
+        pool = get_worker_pool()
+        if not pool.submit_job(job):
+            logger.warning(f"Waves queue full, dropped: {audio_path.name}")
+    except Exception as e:
+        logger.error(f"Failed to submit decomposition job: {e}")
 
 
 # =============================================================================
@@ -198,6 +240,9 @@ async def process_turn1_slot(
                     ).model_dump_json(),
                 )
             )
+
+            # Submit decomposition job (non-blocking, fire-and-forget)
+            _submit_decomposition_job(audio_path, session_id, turn_index=1)
 
             # Add to manifest
             session.add_turn1_entry(
@@ -459,6 +504,9 @@ async def process_turn2_slot(
                     ).model_dump_json(),
                 )
             )
+
+            # Submit decomposition job (non-blocking, fire-and-forget)
+            _submit_decomposition_job(audio_path, session_id, turn_index=2)
 
             # Add to manifest
             session.add_turn2_entry(
@@ -757,6 +805,9 @@ async def process_turn3_slot(
                     ).model_dump_json(),
                 )
             )
+
+            # Submit decomposition job (non-blocking, fire-and-forget)
+            _submit_decomposition_job(audio_path, session_id, turn_index=3)
 
             # Add to manifest
             session.add_turn3_entry(

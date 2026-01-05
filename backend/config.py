@@ -59,6 +59,12 @@ IMPORTANT: Always output valid JSON. Match the voice to your response's emotiona
     timeout_s: int = 60
     retries: int = 3
 
+    # Waves decomposition configuration
+    waves_enabled: bool = True
+    waves_max_workers: int = 2
+    waves_queue_max_size: int = 100
+    waves_job_timeout_s: float = 60.0
+
     # ElevenLabs TTS configuration
     elevenlabs_api_key: str = ""
     elevenlabs_default_model: str = "eleven_flash_v2_5"

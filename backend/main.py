@@ -1,6 +1,7 @@
 """FastAPI application with SSE streaming for Reflective Resonance."""
 
 import logging
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -19,6 +20,7 @@ from backend.models import (
 )
 from backend.streaming import broadcast_chat
 from backend.stt import STTResponse, STTSession, ScribeError, get_scribe_client
+from backend.waves import shutdown_waves_worker, startup_waves_worker
 
 # =============================================================================
 # Logging Configuration
@@ -34,10 +36,26 @@ logger = logging.getLogger(__name__)
 # FastAPI Application
 # =============================================================================
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Application lifespan management."""
+    # Startup
+    logger.info("Starting waves worker pool...")
+    await startup_waves_worker()
+
+    yield
+
+    # Shutdown
+    logger.info("Stopping waves worker pool...")
+    await shutdown_waves_worker()
+
+
 app = FastAPI(
     title="Reflective Resonance API",
     description="Backend API for the Reflective Resonance art installation",
     version="1.0.0",
+    lifespan=lifespan,
 )
 
 # CORS middleware for frontend development
