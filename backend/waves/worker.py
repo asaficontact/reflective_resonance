@@ -10,6 +10,7 @@ import time
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Callable
 
 from backend.waves.decompose_v3 import DecomposeResult, decompose_audio_to_waves
 
@@ -22,9 +23,22 @@ class DecomposeJob:
 
     session_id: str
     turn_index: int
+    slot_id: int
+    agent_id: str
+    voice_profile: str
+    tts_basename: str
     input_path: Path
     output_dir: Path
+    target_slot_id: int | None = None
     submitted_at: float = field(default_factory=time.time)
+
+
+@dataclass
+class WavesJobResult:
+    """Result of a wave decomposition job, combining job info with result."""
+
+    job: DecomposeJob
+    result: DecomposeResult
 
 
 class WavesWorkerPool:
@@ -55,6 +69,23 @@ class WavesWorkerPool:
         self._queue: asyncio.Queue[DecomposeJob | None] | None = None
         self._worker_tasks: list[asyncio.Task] = []
         self._running = False
+
+        # Result notification callback (for events orchestrator)
+        self._result_callback: Callable[[WavesJobResult], None] | None = None
+
+    def set_result_callback(
+        self, callback: Callable[[WavesJobResult], None] | None
+    ) -> None:
+        """Set a callback to be invoked when jobs complete.
+
+        The callback receives a WavesJobResult with both the job and result.
+        This is used by the events orchestrator to track wave-mix readiness.
+
+        Args:
+            callback: Function to call on job completion, or None to clear
+        """
+        self._result_callback = callback
+        logger.debug(f"Result callback {'set' if callback else 'cleared'}")
 
     async def start(self) -> None:
         """Start the worker pool. Call on app startup."""
@@ -207,6 +238,14 @@ class WavesWorkerPool:
                     f"turn={job.turn_index}, file={job.input_path.name}, "
                     f"error={result.error}"
                 )
+
+            # Notify the events orchestrator
+            if self._result_callback:
+                try:
+                    job_result = WavesJobResult(job=job, result=result)
+                    self._result_callback(job_result)
+                except Exception as e:
+                    logger.error(f"Error in result callback: {e}")
 
         except asyncio.TimeoutError:
             logger.warning(

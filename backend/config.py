@@ -65,6 +65,12 @@ IMPORTANT: Always output valid JSON. Match the voice to your response's emotiona
     waves_queue_max_size: int = 100
     waves_job_timeout_s: float = 60.0
 
+    # Events WebSocket configuration (for TouchDesigner)
+    events_ws_enabled: bool = True
+    events_ws_path: str = "/v1/events"
+    events_turn1_timeout_s: float = 15.0
+    events_dialogue_timeout_s: float = 30.0
+
     # ElevenLabs TTS configuration
     elevenlabs_api_key: str = ""
     elevenlabs_default_model: str = "eleven_flash_v2_5"

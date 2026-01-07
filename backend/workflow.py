@@ -41,6 +41,7 @@ from backend.prompts import render_turn1_prompt, render_turn2_prompt, render_tur
 from backend.sessions import TTSSession
 from backend.tts import MultiVoiceAgentTTS
 from backend.waves import DecomposeJob, get_worker_pool, tts_path_to_waves_dir
+from backend.events import get_orchestrator, SlotMeta, DialogueSpec
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +74,11 @@ def _submit_decomposition_job(
     audio_path: "Path",
     session_id: str,
     turn_index: int,
+    *,
+    slot_id: int,
+    agent_id: str,
+    voice_profile: str,
+    target_slot_id: int | None = None,
 ) -> None:
     """Submit a decomposition job (non-blocking, best-effort).
 
@@ -91,11 +97,17 @@ def _submit_decomposition_job(
         from pathlib import Path
 
         output_dir = tts_path_to_waves_dir(audio_path, session_id, turn_index)
+        tts_basename = (Path(audio_path) if not isinstance(audio_path, Path) else audio_path).stem
         job = DecomposeJob(
             session_id=session_id,
             turn_index=turn_index,
+            slot_id=slot_id,
+            agent_id=agent_id,
+            voice_profile=voice_profile,
+            tts_basename=tts_basename,
             input_path=Path(audio_path) if not isinstance(audio_path, Path) else audio_path,
             output_dir=output_dir,
+            target_slot_id=target_slot_id,
         )
 
         pool = get_worker_pool()
@@ -103,6 +115,120 @@ def _submit_decomposition_job(
             logger.warning(f"Waves queue full, dropped: {audio_path.name}")
     except Exception as e:
         logger.error(f"Failed to submit decomposition job: {e}")
+
+
+# =============================================================================
+# Events Orchestrator Helpers
+# =============================================================================
+
+
+def _compute_dialogues(state: WorkflowState) -> list[DialogueSpec]:
+    """Compute dialogue specifications from Turn 2/3 results.
+
+    A dialogue is created for each slot that has a successful Turn 3 reply.
+    The commenters are the Turn 2 slots that commented on that slot.
+
+    Args:
+        state: Workflow state with turn2_results, turn3_results, and comments_by_target
+
+    Returns:
+        List of DialogueSpec for all valid dialogues
+    """
+    dialogues = []
+
+    for slot_id, turn3_result in state.turn3_results.items():
+        if not turn3_result.success:
+            continue
+
+        # Get the comments received by this slot
+        comments = state.comments_by_target.get(slot_id, [])
+        if not comments:
+            continue
+
+        # Build commenter SlotMetas from Turn 2 results
+        commenters = []
+        for comment in comments:
+            turn2_result = state.turn2_results.get(comment.from_slot_id)
+            if turn2_result and turn2_result.success:
+                # Extract tts_basename from audio_path
+                tts_basename = ""
+                if turn2_result.audio_path:
+                    from pathlib import Path
+                    tts_basename = Path(turn2_result.audio_path).stem
+
+                commenters.append(SlotMeta(
+                    slot_id=turn2_result.slot_id,
+                    agent_id=turn2_result.agent_id,
+                    voice_profile=turn2_result.voice_profile,
+                    tts_basename=tts_basename,
+                ))
+
+        # Build respondent SlotMeta
+        respondent_basename = ""
+        if turn3_result.audio_path:
+            from pathlib import Path
+            respondent_basename = Path(turn3_result.audio_path).stem
+
+        respondent = SlotMeta(
+            slot_id=turn3_result.slot_id,
+            agent_id=turn3_result.agent_id,
+            voice_profile=turn3_result.voice_profile,
+            tts_basename=respondent_basename,
+        )
+
+        dialogues.append(DialogueSpec(
+            dialogue_id=f"turn23-slot{slot_id}",
+            target_slot_id=slot_id,
+            commenters=commenters,
+            respondent=respondent,
+        ))
+
+    # Sort by target slot ID for deterministic ordering
+    dialogues.sort(key=lambda d: d.target_slot_id)
+    return dialogues
+
+
+def _notify_events_begin_session(state: WorkflowState) -> None:
+    """Notify events orchestrator of session start."""
+    if not settings.events_ws_enabled:
+        return
+
+    try:
+        slot_metas = [
+            SlotMeta(
+                slot_id=slot.slotId,
+                agent_id=slot.agentId,
+                voice_profile="",  # Set later when TTS completes
+                tts_basename="",
+            )
+            for slot in state.slots
+        ]
+        get_orchestrator().begin_session(state.session.session_id, slot_metas)
+    except Exception as e:
+        logger.error(f"Failed to notify events begin_session: {e}")
+
+
+def _notify_events_turn1_complete(session_id: str) -> None:
+    """Notify events orchestrator that Turn 1 is complete."""
+    if not settings.events_ws_enabled:
+        return
+
+    try:
+        get_orchestrator().turn1_complete(session_id)
+    except Exception as e:
+        logger.error(f"Failed to notify events turn1_complete: {e}")
+
+
+def _notify_events_turn3_complete(state: WorkflowState) -> None:
+    """Notify events orchestrator that Turn 3 is complete with dialogue specs."""
+    if not settings.events_ws_enabled:
+        return
+
+    try:
+        dialogues = _compute_dialogues(state)
+        get_orchestrator().turn3_complete(state.session.session_id, dialogues)
+    except Exception as e:
+        logger.error(f"Failed to notify events turn3_complete: {e}")
 
 
 # =============================================================================
@@ -242,7 +368,14 @@ async def process_turn1_slot(
             )
 
             # Submit decomposition job (non-blocking, fire-and-forget)
-            _submit_decomposition_job(audio_path, session_id, turn_index=1)
+            _submit_decomposition_job(
+                audio_path,
+                session_id,
+                turn_index=1,
+                slot_id=slot_id,
+                agent_id=agent_id,
+                voice_profile=response.voice_profile,
+            )
 
             # Add to manifest
             session.add_turn1_entry(
@@ -355,6 +488,9 @@ async def execute_turn1(
             ).model_dump_json(),
         )
     )
+
+    # Notify events orchestrator (for TouchDesigner WebSocket)
+    _notify_events_turn1_complete(session_id)
 
     logger.info(f"Turn 1 complete: {successful_count}/{len(state.slots)} slots succeeded")
 
@@ -506,7 +642,15 @@ async def process_turn2_slot(
             )
 
             # Submit decomposition job (non-blocking, fire-and-forget)
-            _submit_decomposition_job(audio_path, session_id, turn_index=2)
+            _submit_decomposition_job(
+                audio_path,
+                session_id,
+                turn_index=2,
+                slot_id=slot_id,
+                agent_id=agent_id,
+                voice_profile=response.voice_profile,
+                target_slot_id=response.targetSlotId,
+            )
 
             # Add to manifest
             session.add_turn2_entry(
@@ -807,7 +951,14 @@ async def process_turn3_slot(
             )
 
             # Submit decomposition job (non-blocking, fire-and-forget)
-            _submit_decomposition_job(audio_path, session_id, turn_index=3)
+            _submit_decomposition_job(
+                audio_path,
+                session_id,
+                turn_index=3,
+                slot_id=slot_id,
+                agent_id=agent_id,
+                voice_profile=response.voice_profile,
+            )
 
             # Add to manifest
             session.add_turn3_entry(
@@ -936,6 +1087,9 @@ async def execute_turn3(
         )
     )
 
+    # Notify events orchestrator (for TouchDesigner WebSocket)
+    _notify_events_turn3_complete(state)
+
     logger.info(f"Turn 3 complete: {successful_count}/{len(slots_with_comments)} slots succeeded")
 
 
@@ -967,6 +1121,9 @@ async def run_three_turn_workflow(
         slots=slots,
         user_message=message,
     )
+
+    # Notify events orchestrator of session start (for TouchDesigner WebSocket)
+    _notify_events_begin_session(state)
 
     # Create event queue
     queue: asyncio.Queue[ServerSentEvent] = asyncio.Queue()

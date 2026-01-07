@@ -12,6 +12,7 @@ from backend.waves.paths import (
 )
 from backend.waves.worker import (
     DecomposeJob,
+    WavesJobResult,
     WavesWorkerPool,
     get_worker_pool,
     shutdown_waves_worker,
@@ -21,6 +22,7 @@ from backend.waves.worker import (
 __all__ = [
     # Worker pool
     "DecomposeJob",
+    "WavesJobResult",
     "WavesWorkerPool",
     "get_worker_pool",
     "startup_waves_worker",

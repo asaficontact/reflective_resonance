@@ -21,6 +21,7 @@ from backend.models import (
 from backend.streaming import broadcast_chat
 from backend.stt import STTResponse, STTSession, ScribeError, get_scribe_client
 from backend.waves import shutdown_waves_worker, startup_waves_worker
+from backend.events import events_router, shutdown_events, startup_events
 
 # =============================================================================
 # Logging Configuration
@@ -44,9 +45,15 @@ async def lifespan(app: FastAPI):
     logger.info("Starting waves worker pool...")
     await startup_waves_worker()
 
+    logger.info("Starting events orchestrator...")
+    await startup_events()
+
     yield
 
     # Shutdown
+    logger.info("Stopping events orchestrator...")
+    await shutdown_events()
+
     logger.info("Stopping waves worker pool...")
     await shutdown_waves_worker()
 
@@ -72,6 +79,9 @@ app.add_middleware(
 ARTIFACTS_DIR = Path("artifacts")
 ARTIFACTS_DIR.mkdir(exist_ok=True)
 app.mount("/v1/audio", StaticFiles(directory=str(ARTIFACTS_DIR)), name="audio")
+
+# Include WebSocket router for TouchDesigner events
+app.include_router(events_router)
 
 
 # =============================================================================
