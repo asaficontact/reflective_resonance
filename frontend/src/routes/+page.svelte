@@ -3,7 +3,7 @@
 	import { browser } from '$app/environment';
 	import { appStore } from '$lib/stores/app.svelte';
 	import { createMultiStream } from '$lib/utils/mock-responses';
-	import { createRealStream, type SlotDoneData, type SlotAudioData } from '$lib/utils/streaming';
+	import { createRealStream, type SlotStartData, type SlotDoneData, type SlotAudioData } from '$lib/utils/streaming';
 	import { KEYBOARD_SHORTCUTS, API_CONFIG } from '$lib/config/constants';
 	import type { SlotId, ErrorType, TurnIndex, MessageKind } from '$lib/types';
 
@@ -100,6 +100,7 @@
 			},
 			onAllComplete: () => {
 				appStore.setIsSending(false);
+				appStore.clearAllSpeakingSlots();
 				activeStream = null;
 			}
 		};
@@ -115,7 +116,14 @@
 			onTurnDone: (turnIndex: TurnIndex, _slotCount: number, _sessionId: string) => {
 				appStore.setTurnStatus(turnIndex, 'done');
 			},
+			onSlotStart: (data: SlotStartData) => {
+				// Mark slot as speaking (for ripple effect)
+				console.log(`[Ripple] Slot ${data.slotId} started speaking - Turn ${data.turnIndex}`);
+				appStore.setSlotSpeaking(data.slotId, true);
+			},
 			onSlotDone: (data: SlotDoneData) => {
+				// Clear speaking state for this slot
+				appStore.setSlotSpeaking(data.slotId, false);
 				const key = getMessageKey(data.slotId, data.turnIndex, data.kind);
 
 				// Create or update message for this turn

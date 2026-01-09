@@ -1,7 +1,8 @@
 """Audio decomposition algorithm for wave component extraction.
 
-This module contains the V3 decomposition algorithm that splits TTS audio
-into 3 wave components for the water-based art installation.
+This module contains the decomposition algorithm that splits TTS audio
+into 2 wave components (fundamental + 1st harmonic) for the water-based
+art installation.
 
 IMPORTANT: This function runs in a subprocess (ProcessPoolExecutor),
 so it must be picklable (module-level function, no closures).
@@ -29,9 +30,10 @@ class DecomposeResult:
     output_dir: str
     wave1_path: str | None = None
     wave2_path: str | None = None
-    wave3_path: str | None = None
-    wave_mix_path: str | None = None
     rmse: float | None = None
+    nrmse: float | None = None
+    snr_db: float | None = None
+    env_corr: float | None = None
     error: str | None = None
     duration_ms: float = 0.0
 
@@ -80,11 +82,10 @@ def _calculate_envelope(signal: np.ndarray) -> np.ndarray:
 
 def decompose_audio_to_waves(input_path: str, output_dir: str) -> DecomposeResult:
     """
-    Decompose a TTS WAV into 3 wave components.
+    Decompose a TTS WAV into 2 wave components (fundamental + 1st harmonic).
 
-    V3: Dynamic Amplitude Matching
     Uses dynamic gain to force the mix envelope to perfectly match original envelope.
-    Also calculates RMSE Loss.
+    Calculates loss metrics: RMSE, NRMSE, SNR (dB), and envelope correlation.
 
     Args:
         input_path: Absolute path to input WAV file
@@ -157,14 +158,12 @@ def decompose_audio_to_waves(input_path: str, output_dir: str) -> DecomposeResul
 
         amp1 = _extract_harmonic_amp(S, f0_clean, 1, sr, n_fft, freqs, times_samples, times_frames)
         amp2 = _extract_harmonic_amp(S, f0_clean, 2, sr, n_fft, freqs, times_samples, times_frames)
-        amp3 = _extract_harmonic_amp(S, f0_clean, 3, sr, n_fft, freqs, times_samples, times_frames)
 
-        # Synthesize Base Waves (V1 Cosine)
+        # Synthesize Base Waves (2 harmonics)
         raw_wave1 = _synthesize_raw(f0_mapped, 1, amp1, sr)
         raw_wave2 = _synthesize_raw(f0_mapped, 2, amp2, sr)
-        raw_wave3 = _synthesize_raw(f0_mapped, 3, amp3, sr)
 
-        raw_mix = raw_wave1 + raw_wave2 + raw_wave3
+        raw_mix = raw_wave1 + raw_wave2
 
         # V3 Dynamic Amplitude Matching
         env_original_frames = _calculate_envelope(y)
@@ -182,24 +181,28 @@ def decompose_audio_to_waves(input_path: str, output_dir: str) -> DecomposeResul
 
         wave1 = raw_wave1 * gain_curve
         wave2 = raw_wave2 * gain_curve
-        wave3 = raw_wave3 * gain_curve
-        mix = wave1 + wave2 + wave3
+        mix = wave1 + wave2
 
-        # Calculate Loss Metrics (RMSE)
+        # Calculate Loss Metrics
         mse = np.mean((y - mix) ** 2)
         rmse = float(np.sqrt(mse))
 
-        # Save files
+        # Extended metrics
+        nrmse = rmse / (np.std(y) + 1e-10)
+        signal_power = np.mean(y ** 2)
+        noise_power = mse
+        snr_db = float(10 * np.log10(signal_power / (noise_power + 1e-10)))
+        env_mix_final = _calculate_envelope(mix)
+        min_len = min(len(env_original_frames), len(env_mix_final))
+        env_corr = float(np.corrcoef(env_original_frames[:min_len], env_mix_final[:min_len])[0, 1])
+
+        # Save files (wave1 and wave2 only, no wave_mix)
         base_name = input_path_obj.stem
         out1 = output_dir_obj / f"{base_name}_v3_wave1.wav"
         out2 = output_dir_obj / f"{base_name}_v3_wave2.wav"
-        out3 = output_dir_obj / f"{base_name}_v3_wave3.wav"
-        out_mix = output_dir_obj / f"{base_name}_v3_wave_mix.wav"
 
         sf.write(str(out1), wave1, sr)
         sf.write(str(out2), wave2, sr)
-        sf.write(str(out3), wave3, sr)
-        sf.write(str(out_mix), mix, sr)
 
         duration_ms = (time.time() - start_time) * 1000
 
@@ -209,9 +212,10 @@ def decompose_audio_to_waves(input_path: str, output_dir: str) -> DecomposeResul
             output_dir=output_dir,
             wave1_path=str(out1),
             wave2_path=str(out2),
-            wave3_path=str(out3),
-            wave_mix_path=str(out_mix),
             rmse=rmse,
+            nrmse=nrmse,
+            snr_db=snr_db,
+            env_corr=env_corr,
             duration_ms=duration_ms,
         )
 

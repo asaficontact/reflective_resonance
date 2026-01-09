@@ -37,6 +37,9 @@ function createAppStore() {
 		3: 'pending'
 	});
 
+	// Track slots that are currently speaking (active in any turn)
+	let speakingSlotIds = $state<Set<SlotId>>(new Set());
+
 	// === Derived State ===
 	const assignedSlots = $derived(slots.filter((s) => s.agentId !== null));
 	const canSend = $derived(
@@ -118,6 +121,24 @@ function createAppStore() {
 				retryCount: 0
 			};
 		}
+	}
+
+	function setSlotSpeaking(slotId: SlotId, isSpeaking: boolean): void {
+		if (isSpeaking) {
+			speakingSlotIds = new Set([...speakingSlotIds, slotId]);
+		} else {
+			const newSet = new Set(speakingSlotIds);
+			newSet.delete(slotId);
+			speakingSlotIds = newSet;
+		}
+	}
+
+	function clearAllSpeakingSlots(): void {
+		speakingSlotIds = new Set();
+	}
+
+	function isSlotSpeaking(slotId: SlotId): boolean {
+		return speakingSlotIds.has(slotId);
 	}
 
 	function addMessage(message: Omit<Message, 'id' | 'timestamp'>): Message {
@@ -359,6 +380,11 @@ function createAppStore() {
 			return streamingSlots;
 		},
 
+		// Speaking slots state (getter)
+		get speakingSlotIds() {
+			return speakingSlotIds;
+		},
+
 		// Actions
 		assignAgentToSlot,
 		clearSlot,
@@ -366,6 +392,9 @@ function createAppStore() {
 		setSlotStatus,
 		incrementRetryCount,
 		resetRetryCount,
+		setSlotSpeaking,
+		clearAllSpeakingSlots,
+		isSlotSpeaking,
 		addMessage,
 		updateMessage,
 		appendToMessage,

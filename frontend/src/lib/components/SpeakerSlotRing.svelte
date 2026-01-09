@@ -15,6 +15,7 @@
 
 	const isSelected = $derived(appStore.selectedSlotId === slot.id);
 	const agent = $derived(slot.agentId ? getAgent(slot.agentId) : null);
+	const isSpeaking = $derived(appStore.speakingSlotIds.has(slot.id));
 	let isHovering = $state(false);
 
 	// DnD state - must use $state to allow svelte-dnd-action to update items
@@ -112,6 +113,15 @@
 		onconsider={handleDndConsider}
 		onfinalize={handleDndFinalize}
 	>
+		{#if (slot.status === 'streaming' || isSpeaking) && agent}
+			<div class="ripple-container" style="--ripple-color: {agent.color}">
+				<div class="ripple-ring"></div>
+				<div class="ripple-ring"></div>
+				<div class="ripple-ring"></div>
+				<div class="ripple-ring"></div>
+			</div>
+		{/if}
+
 		{#if agent}
 			<div class="slot-content">
 				<AgentCard {agent} variant="slot" />
@@ -172,6 +182,7 @@
 		width: 100%;
 		height: 100%;
 		position: relative;
+		z-index: 2;
 	}
 
 	.slot-empty {

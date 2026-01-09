@@ -21,7 +21,6 @@ def tts_path_to_waves_dir(
     The wave files will be written by decompose_audio_to_waves as:
         <output_dir>/<basename>_v3_wave1.wav
         <output_dir>/<basename>_v3_wave2.wav
-        <output_dir>/<basename>_v3_wave3.wav
 
     Args:
         tts_audio_path: Absolute path to the TTS WAV file
@@ -34,20 +33,18 @@ def tts_path_to_waves_dir(
     return WAVES_SESSIONS_BASE / session_id / f"turn_{turn_index}"
 
 
-def get_wave_output_paths(base_name: str, output_dir: Path) -> tuple[Path, Path, Path, Path]:
+def get_wave_output_paths(base_name: str, output_dir: Path) -> tuple[Path, Path]:
     """
-    Get the 4 wave output file paths for a given base name.
+    Get the wave output file paths for a given base name.
 
     Args:
         base_name: The base filename without extension (e.g., "slot-1_gpt-5.1_friendly_casual")
         output_dir: The output directory path
 
     Returns:
-        Tuple of (wave1_path, wave2_path, wave3_path, wave_mix_path)
+        Tuple of (wave1_path, wave2_path)
     """
     return (
         output_dir / f"{base_name}_v3_wave1.wav",
         output_dir / f"{base_name}_v3_wave2.wav",
-        output_dir / f"{base_name}_v3_wave3.wav",
-        output_dir / f"{base_name}_v3_wave_mix.wav",
     )

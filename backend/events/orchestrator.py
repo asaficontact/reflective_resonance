@@ -329,6 +329,16 @@ class EventsOrchestrator:
     # Internal: Event emission
     # -------------------------------------------------------------------------
 
+    def _compute_target_slots(self, agent_slot_id: int) -> tuple[int, int]:
+        """Compute physical target slots for wave1 and wave2.
+
+        wave1 → same slot as agent
+        wave2 → next slot (wrapping 6→1)
+        """
+        wave1_target = agent_slot_id
+        wave2_target = (agent_slot_id % 6) + 1
+        return wave1_target, wave2_target
+
     async def _check_and_emit_turn1(self, session_id: str) -> None:
         """Check if Turn 1 event should be emitted and emit if ready."""
         state = self._sessions.get(session_id)
@@ -355,14 +365,19 @@ class EventsOrchestrator:
         # Build slot info list
         slots = []
         for slot_id, meta in sorted(state.turn1_ready.items()):
-            abs_path, rel_path = meta.derive_wave_mix_paths(session_id, 1)
+            wave1_abs, wave1_rel, wave2_abs, wave2_rel = meta.derive_wave_paths(session_id, 1)
+            wave1_target, wave2_target = self._compute_target_slots(meta.slot_id)
             slots.append(
                 SlotWaveInfo(
                     slotId=meta.slot_id,
                     agentId=meta.agent_id,
                     voiceProfile=meta.voice_profile,
-                    waveMixPathAbs=abs_path,
-                    waveMixPathRel=rel_path,
+                    wave1PathAbs=wave1_abs,
+                    wave1PathRel=wave1_rel,
+                    wave1TargetSlotId=wave1_target,
+                    wave2PathAbs=wave2_abs,
+                    wave2PathRel=wave2_rel,
+                    wave2TargetSlotId=wave2_target,
                 )
             )
 
@@ -417,14 +432,19 @@ class EventsOrchestrator:
         for commenter in dialogue.commenters:
             # Get the actual metadata from turn2_ready
             meta = state.turn2_ready.get(commenter.slot_id, commenter)
-            abs_path, rel_path = meta.derive_wave_mix_paths(session_id, 2)
+            wave1_abs, wave1_rel, wave2_abs, wave2_rel = meta.derive_wave_paths(session_id, 2)
+            wave1_target, wave2_target = self._compute_target_slots(meta.slot_id)
             commenters.append(
                 SlotWaveInfo(
                     slotId=meta.slot_id,
                     agentId=meta.agent_id,
                     voiceProfile=meta.voice_profile,
-                    waveMixPathAbs=abs_path,
-                    waveMixPathRel=rel_path,
+                    wave1PathAbs=wave1_abs,
+                    wave1PathRel=wave1_rel,
+                    wave1TargetSlotId=wave1_target,
+                    wave2PathAbs=wave2_abs,
+                    wave2PathRel=wave2_rel,
+                    wave2TargetSlotId=wave2_target,
                 )
             )
             play_order.append(PlayOrderItem(role="commenter", slotId=meta.slot_id))
@@ -433,13 +453,18 @@ class EventsOrchestrator:
         resp_meta = state.turn3_ready.get(
             dialogue.respondent.slot_id, dialogue.respondent
         )
-        abs_path, rel_path = resp_meta.derive_wave_mix_paths(session_id, 3)
+        wave1_abs, wave1_rel, wave2_abs, wave2_rel = resp_meta.derive_wave_paths(session_id, 3)
+        wave1_target, wave2_target = self._compute_target_slots(resp_meta.slot_id)
         respondent = SlotWaveInfo(
             slotId=resp_meta.slot_id,
             agentId=resp_meta.agent_id,
             voiceProfile=resp_meta.voice_profile,
-            waveMixPathAbs=abs_path,
-            waveMixPathRel=rel_path,
+            wave1PathAbs=wave1_abs,
+            wave1PathRel=wave1_rel,
+            wave1TargetSlotId=wave1_target,
+            wave2PathAbs=wave2_abs,
+            wave2PathRel=wave2_rel,
+            wave2TargetSlotId=wave2_target,
         )
         play_order.append(PlayOrderItem(role="respondent", slotId=resp_meta.slot_id))
 

@@ -26,7 +26,8 @@
       "WebFetch(domain:elevenlabs.io)",
       "WebFetch(domain:github.com)",
       "Bash(grep:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "WebFetch(domain:www.shadcn.io)"
     ]
   }
 }

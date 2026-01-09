@@ -13,18 +13,24 @@ class SlotMeta:
     voice_profile: str
     tts_basename: str  # Base filename for deriving wave-mix path
 
-    def derive_wave_mix_paths(
+    def derive_wave_paths(
         self, session_id: str, turn_index: int
-    ) -> tuple[str, str]:
+    ) -> tuple[str, str, str, str]:
         """
-        Derive absolute and relative paths for the wave-mix file.
+        Derive absolute and relative paths for wave1 and wave2 files.
 
         Returns:
-            Tuple of (absolute_path, relative_path)
+            Tuple of (wave1_abs, wave1_rel, wave2_abs, wave2_rel)
         """
-        rel = f"waves/sessions/{session_id}/turn_{turn_index}/{self.tts_basename}_v3_wave_mix.wav"
-        abs_path = Path("artifacts") / rel
-        return (str(abs_path.resolve()), rel)
+        base_rel = f"waves/sessions/{session_id}/turn_{turn_index}/{self.tts_basename}_v3"
+
+        wave1_rel = f"{base_rel}_wave1.wav"
+        wave2_rel = f"{base_rel}_wave2.wav"
+
+        wave1_abs = str((Path("artifacts") / wave1_rel).resolve())
+        wave2_abs = str((Path("artifacts") / wave2_rel).resolve())
+
+        return (wave1_abs, wave1_rel, wave2_abs, wave2_rel)
 
 
 @dataclass

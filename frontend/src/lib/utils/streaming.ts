@@ -71,6 +71,15 @@ interface DoneEvent {
 	turns: number;
 }
 
+// Extended slot start data for 3-turn workflow
+export interface SlotStartData {
+	slotId: SlotId;
+	agentId: AgentId;
+	sessionId: string;
+	turnIndex: TurnIndex;
+	kind: MessageKind;
+}
+
 // Extended slot done data for 3-turn workflow
 export interface SlotDoneData {
 	slotId: SlotId;
@@ -108,6 +117,7 @@ export interface MultiStreamOptions {
 	// 3-turn workflow callbacks (optional)
 	onTurnStart?: (turnIndex: TurnIndex, sessionId: string) => void;
 	onTurnDone?: (turnIndex: TurnIndex, slotCount: number, sessionId: string) => void;
+	onSlotStart?: (data: SlotStartData) => void;
 	onSlotDone?: (data: SlotDoneData) => void;
 	onSlotAudio?: (data: SlotAudioData) => void;
 	onSessionStart?: (sessionId: string) => void;
@@ -127,6 +137,7 @@ export function createRealStream(options: MultiStreamOptions): { cancel: () => v
 		onAllComplete,
 		onTurnStart,
 		onTurnDone,
+		onSlotStart,
 		onSlotDone,
 		onSlotAudio,
 		onSessionStart
@@ -204,6 +215,7 @@ export function createRealStream(options: MultiStreamOptions): { cancel: () => v
 								onAllComplete,
 								onTurnStart,
 								onTurnDone,
+								onSlotStart,
 								onSlotDone,
 								onSlotAudio
 							});
@@ -257,6 +269,7 @@ function handleSSEEvent(
 		onAllComplete: () => void;
 		onTurnStart?: (turnIndex: TurnIndex, sessionId: string) => void;
 		onTurnDone?: (turnIndex: TurnIndex, slotCount: number, sessionId: string) => void;
+		onSlotStart?: (data: SlotStartData) => void;
 		onSlotDone?: (data: SlotDoneData) => void;
 		onSlotAudio?: (data: SlotAudioData) => void;
 	}
@@ -283,6 +296,13 @@ function handleSSEEvent(
 			console.debug(
 				`Slot ${event.slotId} (${event.agentId}) started - Turn ${event.turnIndex} ${event.kind}`
 			);
+			callbacks.onSlotStart?.({
+				slotId: event.slotId as SlotId,
+				agentId: event.agentId as AgentId,
+				sessionId: event.sessionId,
+				turnIndex: event.turnIndex,
+				kind: event.kind
+			});
 			break;
 		}
 

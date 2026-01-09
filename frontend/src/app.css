@@ -87,8 +87,51 @@ body {
 	}
 }
 
+/* === Ripple Animation for Streaming Slots === */
+@keyframes ripple-expand {
+	0% {
+		transform: scale(1);
+		opacity: 0.6;
+	}
+	100% {
+		transform: scale(1.8);
+		opacity: 0;
+	}
+}
+
+.ripple-container {
+	position: absolute;
+	inset: -20px;
+	pointer-events: none;
+	z-index: 1;
+}
+
+.ripple-ring {
+	position: absolute;
+	inset: 0;
+	border-radius: 50%;
+	border: 2px solid var(--ripple-color, var(--rr-accent-blue));
+	will-change: transform, opacity;
+	animation: ripple-expand 2.4s ease-out infinite;
+}
+
+.ripple-ring:nth-child(1) {
+	animation-delay: 0s;
+}
+.ripple-ring:nth-child(2) {
+	animation-delay: 0.6s;
+}
+.ripple-ring:nth-child(3) {
+	animation-delay: 1.2s;
+}
+.ripple-ring:nth-child(4) {
+	animation-delay: 1.8s;
+}
+
 /* === Slot Ring Styles === */
 .slot-ring {
+	position: relative;
+	overflow: visible;
 	width: var(--rr-ring-size);
 	height: var(--rr-ring-size);
 	border-radius: 50%;

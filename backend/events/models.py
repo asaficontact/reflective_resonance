@@ -7,13 +7,17 @@ from pydantic import BaseModel, Field
 
 
 class SlotWaveInfo(BaseModel):
-    """Wave-mix file info for a single slot."""
+    """Wave file info for a single agent slot."""
 
-    slotId: int = Field(description="Slot ID (1-6)")
+    slotId: int = Field(description="Agent's slot ID (1-6)")
     agentId: str = Field(description="Agent ID that produced this response")
     voiceProfile: str = Field(description="Voice profile used for TTS")
-    waveMixPathAbs: str = Field(description="Absolute filesystem path to wave-mix file")
-    waveMixPathRel: str = Field(description="Relative path under artifacts/")
+    wave1PathAbs: str = Field(description="Absolute path to wave1 file")
+    wave1PathRel: str = Field(description="Relative path to wave1 under artifacts/")
+    wave1TargetSlotId: int = Field(description="Physical slot ID for wave1 playback")
+    wave2PathAbs: str = Field(description="Absolute path to wave2 file")
+    wave2PathRel: str = Field(description="Relative path to wave2 under artifacts/")
+    wave2TargetSlotId: int = Field(description="Physical slot ID for wave2 playback")
 
 
 class Turn1WavesPayload(BaseModel):
