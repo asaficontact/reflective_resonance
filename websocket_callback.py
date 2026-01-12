@@ -641,12 +641,11 @@ def onConnect(dat, client=None):
 
 def onDisconnect(dat, client=None):
     debug('WebSocket disconnected', client)
-    # Stop anything currently playing (optional)
-    _stop_all_slots()
-    _STATE["dialogue_queue"].clear()
-    _STATE["dialogue_running"] = False
-    _STATE["pending_summary"] = None
-    _STATE["turn1_playing"] = False
+    # NOTE: Don't clear playback state on disconnect!
+    # Events are already received and playback should continue.
+    # The backend often disconnects after sending all events.
+    # Only clear deduplication state for the next connection.
+    # _STATE["last_seq_by_session"] could be cleared here if needed
     return
 
 
