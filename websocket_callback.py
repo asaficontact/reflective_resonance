@@ -66,6 +66,14 @@ SENTIMENT_EFFECTS = {
     'negative': {'color': (0.8, 0.3, 0.3), 'intensity': 0.8},
 }
 
+# Sentiment audio paths - played on slots 1A-6A until Turn 1 arrives
+# Replace these placeholder paths with actual wave files
+SENTIMENT_AUDIO_PATHS = {
+    'positive': '/path/to/sentiment_positive.wav',
+    'neutral':  '/path/to/sentiment_neutral.wav',
+    'negative': '/path/to/sentiment_negative.wav',
+}
+
 
 # -----------------------------------------------------------------------------
 # STATE (persists while the .toe is open)
@@ -232,25 +240,34 @@ def _stop_all_slots():
 
 def _handle_user_sentiment(payload):
     """
-    Handle user_sentiment event - show loading effect based on mood.
-    Called BEFORE turn1.waves.ready, enabling anticipatory visuals.
+    Handle user_sentiment event - play sentiment audio and show loading effect.
+    Called BEFORE turn1.waves.ready, enabling anticipatory audio/visuals.
+
+    Plays sentiment audio on slots 1A-6A until Turn 1 arrives and takes over.
 
     Event payload structure:
     {
         "sentiment": "positive" | "neutral" | "negative",
         "justification": "Brief explanation..."
     }
-
-    Customize this function to control your TouchDesigner loading effects:
-    - Adjust colors, particle systems, or visual overlays
-    - Trigger animations based on sentiment
-    - Set intensity levels for ambient effects
     """
     sentiment = payload.get('sentiment', 'neutral')
     justification = payload.get('justification', '')
 
-    debug(f'User sentiment: {sentiment} - {justification}')
+    debug(f'>>> USER SENTIMENT: {sentiment} - {justification}')
 
+    # Get audio path for this sentiment
+    audio_path = SENTIMENT_AUDIO_PATHS.get(sentiment, SENTIMENT_AUDIO_PATHS['neutral'])
+
+    debug(f'  Playing sentiment audio on slots 1A-6A: {audio_path}')
+
+    # Load and play the same audio on all 6 slots (A channel only)
+    for slot_id in range(1, 7):
+        _load_and_play_wave(slot_id, 'A', audio_path)
+
+    debug(f'  Sentiment audio playing (will stop when Turn 1 arrives)')
+
+    # Optional: Update visual effects based on sentiment
     effect = SENTIMENT_EFFECTS.get(sentiment, SENTIMENT_EFFECTS['neutral'])
     color = effect['color']
     intensity = effect['intensity']
