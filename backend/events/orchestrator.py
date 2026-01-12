@@ -20,6 +20,7 @@ from backend.events.models import (
     PlayOrderItem,
     SlotWaveInfo,
     Turn1WavesPayload,
+    UserSentimentPayload,
 )
 from backend.events.state import DialogueSpec, SessionEventsState, SlotMeta
 
@@ -503,6 +504,42 @@ class EventsOrchestrator:
                     logger.warning("WebSocket not connected, dropping event")
             except Exception as e:
                 logger.error(f"Error sending WebSocket event: {e}")
+
+    async def emit_user_sentiment(
+        self,
+        session_id: str,
+        sentiment: str,
+        justification: str,
+    ) -> None:
+        """Emit user_sentiment event to TouchDesigner.
+
+        Called early in the workflow (parallel with Turn 1) to enable
+        loading effects based on user mood.
+
+        Args:
+            session_id: The workflow session UUID
+            sentiment: Detected sentiment (positive/neutral/negative)
+            justification: Brief explanation of the sentiment
+        """
+        state = self._sessions.get(session_id)
+        if not state:
+            logger.warning(f"emit_user_sentiment: Session {session_id} not found")
+            return
+
+        payload = UserSentimentPayload(
+            sentiment=sentiment,
+            justification=justification,
+        )
+
+        event = EventEnvelope.create(
+            event_type="user_sentiment",
+            session_id=session_id,
+            seq=state.next_seq(),
+            payload=payload,
+        )
+
+        await self._send_event(event)
+        logger.info(f"Emitted user_sentiment: {session_id}, sentiment={sentiment}")
 
     # -------------------------------------------------------------------------
     # Internal: Timeout handlers

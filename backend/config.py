@@ -71,6 +71,13 @@ IMPORTANT: Always output valid JSON. Match the voice to your response's emotiona
     events_turn1_timeout_s: float = 15.0
     events_dialogue_timeout_s: float = 30.0
 
+    # Sentiment analysis configuration
+    sentiment_enabled: bool = True
+    sentiment_model: str = "openai/gpt-4o-mini"
+    sentiment_temperature: float = 0.3
+    sentiment_timeout_s: float = 10.0
+    sentiment_max_tokens: int = 100
+
     # ElevenLabs TTS configuration
     elevenlabs_api_key: str = ""
     elevenlabs_default_model: str = "eleven_flash_v2_5"

@@ -38,6 +38,7 @@ from backend.models import (
     SpokenResponse,
 )
 from backend.prompts import render_turn1_prompt, render_turn2_prompt, render_turn3_prompt
+from backend.sentiment import analyze_sentiment, SentimentResult
 from backend.sessions import TTSSession
 from backend.tts import MultiVoiceAgentTTS
 from backend.waves import DecomposeJob, get_worker_pool, tts_path_to_waves_dir
@@ -229,6 +230,41 @@ def _notify_events_turn3_complete(state: WorkflowState) -> None:
         get_orchestrator().turn3_complete(state.session.session_id, dialogues)
     except Exception as e:
         logger.error(f"Failed to notify events turn3_complete: {e}")
+
+
+async def _run_sentiment_analysis(
+    state: WorkflowState,
+    user_message: str,
+) -> SentimentResult | None:
+    """Run sentiment analysis and emit WebSocket event.
+
+    Called in parallel with Turn 1 to provide early mood indication
+    for TouchDesigner loading effects.
+
+    Args:
+        state: Workflow state with session info
+        user_message: The user's message to analyze
+
+    Returns:
+        SentimentResult or None if disabled/failed
+    """
+    if not settings.events_ws_enabled or not settings.sentiment_enabled:
+        return None
+
+    result = await analyze_sentiment(user_message)
+
+    if result:
+        try:
+            orchestrator = get_orchestrator()
+            await orchestrator.emit_user_sentiment(
+                session_id=state.session.session_id,
+                sentiment=result.sentiment,
+                justification=result.justification,
+            )
+        except Exception as e:
+            logger.error(f"Failed to emit user_sentiment: {e}")
+
+    return result
 
 
 # =============================================================================
@@ -1131,8 +1167,20 @@ async def run_three_turn_workflow(
     # Run workflow in background task
     async def run_workflow():
         try:
+            # Run sentiment analysis in parallel with Turn 1
+            # Sentiment is fast (~1s) and emits user_sentiment event early
+            sentiment_task = asyncio.create_task(
+                _run_sentiment_analysis(state, message)
+            )
+
             # Turn 1: All slots respond to user
             await execute_turn1(state, queue)
+
+            # Ensure sentiment completes (don't block if failed)
+            try:
+                await asyncio.wait_for(sentiment_task, timeout=1.0)
+            except asyncio.TimeoutError:
+                logger.warning("Sentiment task didn't complete in time after Turn 1")
 
             # Turn 2: Each slot comments on one peer
             await execute_turn2(state, queue)

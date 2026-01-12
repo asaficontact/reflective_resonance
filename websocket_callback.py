@@ -57,6 +57,14 @@ INTER_DIALOGUE_GAP_S = 1.0
 # If True, stop the slot audio before playing a new clip on that slot
 STOP_BEFORE_PLAY = True
 
+# Sentiment effect mappings - customize for your installation
+# These define loading effect parameters based on user mood
+SENTIMENT_EFFECTS = {
+    'positive': {'color': (0.2, 0.8, 0.4), 'intensity': 1.2},
+    'neutral':  {'color': (0.5, 0.5, 0.8), 'intensity': 1.0},
+    'negative': {'color': (0.8, 0.3, 0.3), 'intensity': 0.8},
+}
+
 
 # -----------------------------------------------------------------------------
 # STATE (persists while the .toe is open)
@@ -218,6 +226,49 @@ def _stop_all_slots():
 # EVENT HANDLING
 # -----------------------------------------------------------------------------
 
+def _handle_user_sentiment(payload):
+    """
+    Handle user_sentiment event - show loading effect based on mood.
+    Called BEFORE turn1.waves.ready, enabling anticipatory visuals.
+
+    Event payload structure:
+    {
+        "sentiment": "positive" | "neutral" | "negative",
+        "justification": "Brief explanation..."
+    }
+
+    Customize this function to control your TouchDesigner loading effects:
+    - Adjust colors, particle systems, or visual overlays
+    - Trigger animations based on sentiment
+    - Set intensity levels for ambient effects
+    """
+    sentiment = payload.get('sentiment', 'neutral')
+    justification = payload.get('justification', '')
+
+    debug(f'User sentiment: {sentiment} - {justification}')
+
+    effect = SENTIMENT_EFFECTS.get(sentiment, SENTIMENT_EFFECTS['neutral'])
+    color = effect['color']
+    intensity = effect['intensity']
+
+    # Example: Update TouchDesigner parameters
+    # Uncomment and modify these lines to match your network:
+    #
+    # # Set loading effect color
+    # if op('sentiment_color'):
+    #     op('sentiment_color').par.value0r = color[0]
+    #     op('sentiment_color').par.value0g = color[1]
+    #     op('sentiment_color').par.value0b = color[2]
+    #
+    # # Set intensity
+    # if op('loading_intensity'):
+    #     op('loading_intensity').par.value0 = intensity
+    #
+    # # Trigger loading animation
+    # if op('loading_trigger'):
+    #     op('loading_trigger').par.start.pulse()
+
+
 def _dedupe_event(event_dict):
     """
     Deduplicate per session based on seq. Returns True if this event is new.
@@ -282,7 +333,7 @@ def _handle_turn1(payload):
     _play_all_slots()
 
     # Optional: stop after duration (you can remove if you want loops)
-    run("_stop_all_slots()", delaySeconds=TURN1_PLAY_DURATION_S, fromOP=me)
+    run("_stop_all_slots()", delayMilliSeconds=TURN1_PLAY_DURATION_S * 1000, fromOP=me)
 
 
 def _enqueue_dialogue(payload):
@@ -293,7 +344,7 @@ def _ensure_dialogue_runner():
     if _STATE["dialogue_running"]:
         return
     _STATE["dialogue_running"] = True
-    run("_run_next_dialogue()", delaySeconds=0.0, fromOP=me)
+    run("_run_next_dialogue()", delayMilliSeconds=0, fromOP=me)
 
 
 def _run_next_dialogue():
@@ -315,7 +366,7 @@ def _run_next_dialogue():
     # Safety check
     if not respondent or not respondent.get('wave1PathAbs'):
         debug('Dialogue missing respondent wave1PathAbs; skipping:', dialogue.get('dialogueId'))
-        run("_run_next_dialogue()", delaySeconds=INTER_DIALOGUE_GAP_S, fromOP=me)
+        run("_run_next_dialogue()", delayMilliSeconds=INTER_DIALOGUE_GAP_S * 1000, fromOP=me)
         return
 
     # Build playback steps: commenters then respondent
@@ -368,7 +419,7 @@ def _play_steps_sequentially(steps, idx):
     """
     if idx >= len(steps):
         # Dialogue done: small gap then next dialogue
-        run("_run_next_dialogue()", delaySeconds=INTER_DIALOGUE_GAP_S, fromOP=me)
+        run("_run_next_dialogue()", delayMilliSeconds=INTER_DIALOGUE_GAP_S * 1000, fromOP=me)
         return
 
     role, wave1_target, wave1_path, wave2_target, wave2_path, dur = steps[idx]
@@ -382,7 +433,7 @@ def _play_steps_sequentially(steps, idx):
         _load_and_play_wave(wave2_target, 'B', wave2_path)
 
     # Schedule the next segment
-    run(f"_play_steps_sequentially({repr(steps)}, {idx+1})", delaySeconds=float(dur), fromOP=me)
+    run(f"_play_steps_sequentially({repr(steps)}, {idx+1})", delayMilliSeconds=int(dur * 1000), fromOP=me)
 
 
 def _handle_dialogue(payload):
@@ -399,6 +450,10 @@ def _handle_event_json(event_dict):
 
     evt_type = event_dict.get('type')
     payload = event_dict.get('payload', {}) or {}
+
+    if evt_type == 'user_sentiment':
+        _handle_user_sentiment(payload)
+        return
 
     if evt_type == 'turn1.waves.ready':
         _handle_turn1(payload)

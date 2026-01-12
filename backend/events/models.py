@@ -96,3 +96,14 @@ class HelloAckMessage(BaseModel):
     type: Literal["hello.ack"] = "hello.ack"
     server: str = Field(default="reflective-resonance")
     version: str = Field(default="0.1.0")
+
+
+class UserSentimentPayload(BaseModel):
+    """Payload for user_sentiment event."""
+
+    sentiment: Literal["positive", "neutral", "negative"] = Field(
+        description="Detected emotional tone of user input"
+    )
+    justification: str = Field(
+        description="Brief explanation of sentiment determination"
+    )

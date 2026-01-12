@@ -96,3 +96,18 @@ def render_turn3_prompt(
         received_comments=received_comments,
         voice_profiles_table=VOICE_PROFILES_TABLE,
     )
+
+
+def render_sentiment_prompt(user_message: str) -> str:
+    """Render the sentiment analysis prompt.
+
+    Args:
+        user_message: The user's message to analyze.
+
+    Returns:
+        Rendered prompt string for sentiment analysis LLM call.
+    """
+    return _manager.render(
+        "sentiment_analysis.j2",
+        user_message=user_message,
+    )
