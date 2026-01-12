@@ -53,7 +53,7 @@ SLOT_AUDIO_OPS = {
 FALLBACK_TURN1_DURATION_MS = 8000.0
 FALLBACK_COMMENT_DURATION_MS = 3500.0
 FALLBACK_RESPONDENT_DURATION_MS = 5000.0
-INTER_DIALOGUE_GAP_S = 1.0
+INTER_DIALOGUE_GAP_S = 0.5  # Small gap between dialogues (0.5s)
 
 # If True, stop the slot audio before playing a new clip on that slot
 STOP_BEFORE_PLAY = True
@@ -75,6 +75,8 @@ _STATE = {
     "dialogue_queue": [],           # list of dialogue payload dicts
     "dialogue_running": False,      # whether we are currently sequencing playback
     "last_seq_by_session": {},      # sessionId -> last seq seen (basic dedupe)
+    "pending_summary": None,        # final_summary payload waiting for dialogues to finish
+    "turn1_playing": False,         # True while Turn 1 audio is playing
 }
 
 
@@ -317,9 +319,13 @@ def _handle_turn1(payload):
         return
 
     max_duration_ms = 0.0
+    slot_count = len(slots)
+
+    debug(f'>>> TURN 1 START: Loading {slot_count} slots')
 
     # Load files for each agent's waves to their target physical slots
     for s in slots:
+        slot_id = s.get('slotId')
         wave1_path = s.get('wave1PathAbs')
         wave1_target = s.get('wave1TargetSlotId')
         wave2_path = s.get('wave2PathAbs')
@@ -327,6 +333,8 @@ def _handle_turn1(payload):
         duration_ms = s.get('durationMs', FALLBACK_TURN1_DURATION_MS)
 
         max_duration_ms = max(max_duration_ms, duration_ms)
+
+        debug(f'  Turn1 slot {slot_id}: duration={duration_ms:.0f}ms, wave1->{wave1_target}A, wave2->{wave2_target}B')
 
         # wave1 -> channel A of its target slot
         if wave1_path and wave1_target:
@@ -336,12 +344,27 @@ def _handle_turn1(payload):
         if wave2_path and wave2_target:
             _load_wave(int(wave2_target), 'B', wave2_path)
 
+    # Mark Turn 1 as playing
+    _STATE["turn1_playing"] = True
+
     # Start all at once
     _play_all_slots()
 
-    # Stop after longest audio + buffer (prevents premature cutoff)
-    stop_delay_ms = int(max_duration_ms + 500)
-    run("_stop_all_slots()", delayMilliSeconds=stop_delay_ms, fromOP=me)
+    debug(f'>>> TURN 1 PLAYING: max_duration={max_duration_ms:.0f}ms')
+
+    # Schedule Turn 1 completion - this will start queued dialogues
+    run("_on_turn1_complete()", delayMilliSeconds=int(max_duration_ms + 300), fromOP=me)
+
+
+def _on_turn1_complete():
+    """Called when Turn 1 playback finishes."""
+    _STATE["turn1_playing"] = False
+    debug('>>> TURN 1 COMPLETE')
+
+    # If dialogues are queued, start them now
+    if len(_STATE["dialogue_queue"]) > 0 and not _STATE["dialogue_running"]:
+        debug('>>> Starting queued dialogues')
+        _ensure_dialogue_runner()
 
 
 def _enqueue_dialogue(payload):
@@ -349,7 +372,12 @@ def _enqueue_dialogue(payload):
 
 
 def _ensure_dialogue_runner():
+    # Don't start if dialogues already running
     if _STATE["dialogue_running"]:
+        return
+    # Don't start if Turn 1 is still playing - will be started by _on_turn1_complete()
+    if _STATE["turn1_playing"]:
+        debug('  (dialogues queued, waiting for Turn 1 to complete)')
         return
     _STATE["dialogue_running"] = True
     run("_run_next_dialogue()", delayMilliSeconds=0, fromOP=me)
@@ -364,25 +392,39 @@ def _run_next_dialogue():
     """
     if len(_STATE["dialogue_queue"]) == 0:
         _STATE["dialogue_running"] = False
+        debug('>>> ALL DIALOGUES COMPLETE')
+
+        # Check if there's a pending summary to play
+        if _STATE["pending_summary"] is not None:
+            debug('>>> Playing queued final summary')
+            payload = _STATE["pending_summary"]
+            _STATE["pending_summary"] = None
+            # Small delay before summary starts
+            run("_play_final_summary_now()", delayMilliSeconds=500, fromOP=me)
         return
 
     dialogue = _STATE["dialogue_queue"].pop(0)
+    dialogue_id = dialogue.get('dialogueId', 'unknown')
+    remaining = len(_STATE["dialogue_queue"])
 
     commenters = dialogue.get('commenters', [])
     respondent = dialogue.get('respondent')
 
+    debug(f'>>> DIALOGUE START: {dialogue_id} ({remaining} remaining in queue)')
+
     # Safety check
     if not respondent or not respondent.get('wave1PathAbs'):
-        debug('Dialogue missing respondent wave1PathAbs; skipping:', dialogue.get('dialogueId'))
-        run("_run_next_dialogue()", delayMilliSeconds=INTER_DIALOGUE_GAP_S * 1000, fromOP=me)
+        debug(f'  Dialogue {dialogue_id} missing respondent wave1PathAbs; skipping')
+        run("_run_next_dialogue()", delayMilliSeconds=int(INTER_DIALOGUE_GAP_S * 1000), fromOP=me)
         return
 
     # Build playback steps: commenters then respondent
-    # Each step: (role, wave1_target, wave1_path, wave2_target, wave2_path, duration_s)
+    # Each step: (role, slot_id, wave1_target, wave1_path, wave2_target, wave2_path, duration_s)
     steps = []
 
     # Commenters: one by one (use durationMs from payload, convert to seconds)
     for c in commenters:
+        slot_id = c.get('slotId')
         wave1_path = c.get('wave1PathAbs')
         wave1_target = c.get('wave1TargetSlotId')
         wave2_path = c.get('wave2PathAbs')
@@ -392,6 +434,7 @@ def _run_next_dialogue():
             continue
         steps.append((
             "commenter",
+            slot_id,
             int(wave1_target) if wave1_target else None,
             wave1_path,
             int(wave2_target) if wave2_target else None,
@@ -400,6 +443,7 @@ def _run_next_dialogue():
         ))
 
     # Respondent (use durationMs from payload, convert to seconds)
+    resp_slot_id = respondent.get('slotId')
     resp_wave1_path = respondent.get('wave1PathAbs')
     resp_wave1_target = respondent.get('wave1TargetSlotId')
     resp_wave2_path = respondent.get('wave2PathAbs')
@@ -407,6 +451,7 @@ def _run_next_dialogue():
     resp_duration_ms = respondent.get('durationMs', FALLBACK_RESPONDENT_DURATION_MS)
     steps.append((
         "respondent",
+        resp_slot_id,
         int(resp_wave1_target) if resp_wave1_target else None,
         resp_wave1_path,
         int(resp_wave2_target) if resp_wave2_target else None,
@@ -414,14 +459,16 @@ def _run_next_dialogue():
         (resp_duration_ms + 200) / 1000.0  # Convert to seconds with small buffer
     ))
 
-    # Schedule the sequence
-    _play_steps_sequentially(steps, 0)
+    debug(f'  Dialogue {dialogue_id}: {len(commenters)} commenters + 1 respondent = {len(steps)} steps')
+
+    # Schedule the sequence (pass dialogue_id for logging)
+    _play_steps_sequentially(steps, 0, dialogue_id)
 
 
-def _play_steps_sequentially(steps, idx):
+def _play_steps_sequentially(steps, idx, dialogue_id=''):
     """
     Play steps[idx], then schedule next step.
-    Each step has: (role, wave1_target, wave1_path, wave2_target, wave2_path, duration)
+    Each step has: (role, slot_id, wave1_target, wave1_path, wave2_target, wave2_path, duration)
 
     Mapping:
         wave1 -> wave1_target's A channel
@@ -429,10 +476,13 @@ def _play_steps_sequentially(steps, idx):
     """
     if idx >= len(steps):
         # Dialogue done: small gap then next dialogue
-        run("_run_next_dialogue()", delayMilliSeconds=INTER_DIALOGUE_GAP_S * 1000, fromOP=me)
+        debug(f'  Dialogue {dialogue_id} COMPLETE, next in {INTER_DIALOGUE_GAP_S}s')
+        run("_run_next_dialogue()", delayMilliSeconds=int(INTER_DIALOGUE_GAP_S * 1000), fromOP=me)
         return
 
-    role, wave1_target, wave1_path, wave2_target, wave2_path, dur = steps[idx]
+    role, slot_id, wave1_target, wave1_path, wave2_target, wave2_path, dur = steps[idx]
+
+    debug(f'  [{dialogue_id}] Step {idx+1}/{len(steps)}: {role} slot{slot_id} -> {wave1_target}A/{wave2_target}B, dur={dur:.1f}s')
 
     # Play wave1 on target slot's A channel
     if wave1_path and wave1_target:
@@ -443,13 +493,16 @@ def _play_steps_sequentially(steps, idx):
         _load_and_play_wave(wave2_target, 'B', wave2_path)
 
     # Schedule the next segment
-    run(f"_play_steps_sequentially({repr(steps)}, {idx+1})", delayMilliSeconds=int(dur * 1000), fromOP=me)
+    run(f"_play_steps_sequentially({repr(steps)}, {idx+1}, {repr(dialogue_id)})", delayMilliSeconds=int(dur * 1000), fromOP=me)
 
 
 def _handle_dialogue(payload):
     """
     Dialogues are processed sequentially (queue).
     """
+    dialogue_id = payload.get('dialogueId', 'unknown')
+    queue_len = len(_STATE["dialogue_queue"])
+    debug(f'>>> DIALOGUE RECEIVED: {dialogue_id} (queue size before: {queue_len})')
     _enqueue_dialogue(payload)
     _ensure_dialogue_runner()
 
@@ -457,6 +510,7 @@ def _handle_dialogue(payload):
 def _handle_final_summary(payload):
     """
     Final Summary (Turn 4): Load 6 waves to slots 1A-6A and play all.
+    If dialogues are still running, queue the summary to play after they finish.
 
     Event payload structure:
     {
@@ -474,22 +528,47 @@ def _handle_final_summary(payload):
 
     Summary waves play on the A channel only (no B channel usage).
     """
+    # Store the payload
+    _STATE["pending_summary"] = payload
+
+    # If dialogues are running or queued, wait for them to finish
+    if _STATE["dialogue_running"] or len(_STATE["dialogue_queue"]) > 0:
+        debug(f'>>> FINAL SUMMARY QUEUED (dialogues still running)')
+        return
+
+    # No dialogues running, play immediately
+    _play_final_summary_now()
+
+
+def _play_final_summary_now():
+    """Actually play the final summary (called when ready)."""
+    payload = _STATE["pending_summary"]
+    if payload is None:
+        debug('>>> FINAL SUMMARY: No pending payload')
+        return
+
+    _STATE["pending_summary"] = None
+
+    debug('>>> FINAL SUMMARY START')
+
     status = payload.get('status')
     if status != 'complete':
-        debug('final_summary.ready status is not complete:', status)
+        debug(f'  final_summary.ready status is not complete: {status}')
         return
 
     wave_info = payload.get('waveInfo')
     if not wave_info:
-        debug('final_summary.ready missing waveInfo')
+        debug('  final_summary.ready missing waveInfo')
         return
 
     waves = wave_info.get('waves', [])
     if not waves:
-        debug('final_summary.ready has no waves')
+        debug('  final_summary.ready has no waves')
         return
 
     max_duration_ms = 0.0
+
+    debug(f'  Loading {len(waves)} waves to slots 1A-6A')
 
     # Load each wave to its target slot's A channel
     for w in waves:
@@ -499,11 +578,15 @@ def _handle_final_summary(payload):
 
         max_duration_ms = max(max_duration_ms, duration_ms)
 
+        debug(f'    Slot {slot_id}A: duration={duration_ms:.0f}ms')
+
         if slot_id and wave_path:
             _load_wave(int(slot_id), 'A', wave_path)
 
     # Start all at once
     _play_all_slots()
+
+    debug(f'>>> FINAL SUMMARY PLAYING: max_duration={max_duration_ms:.0f}ms')
 
     # Stop after longest audio + buffer
     stop_delay_ms = int(max_duration_ms + 500)
@@ -515,7 +598,11 @@ def _handle_event_json(event_dict):
         return
 
     evt_type = event_dict.get('type')
+    session_id = event_dict.get('sessionId', '')[:8]  # First 8 chars of session
+    seq = event_dict.get('seq', 0)
     payload = event_dict.get('payload', {}) or {}
+
+    debug(f'EVENT [{session_id}] seq={seq}: {evt_type}')
 
     if evt_type == 'user_sentiment':
         _handle_user_sentiment(payload)
@@ -533,8 +620,8 @@ def _handle_event_json(event_dict):
         _handle_final_summary(payload)
         return
 
-    # Ignore unknown events
-    # debug('Unknown event type:', evt_type)
+    # Ignore unknown events (but log them now for debugging)
+    debug(f'  (unknown event type, ignoring)')
 
 
 # -----------------------------------------------------------------------------
@@ -560,6 +647,8 @@ def onDisconnect(dat, client=None):
     _stop_all_slots()
     _STATE["dialogue_queue"].clear()
     _STATE["dialogue_running"] = False
+    _STATE["pending_summary"] = None
+    _STATE["turn1_playing"] = False
     return
 
 
