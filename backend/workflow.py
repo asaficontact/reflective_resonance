@@ -77,6 +77,24 @@ def get_tts() -> MultiVoiceAgentTTS:
 # =============================================================================
 
 
+def _compute_target_slots_for_agent(slot_id: int) -> list[int]:
+    """
+    Compute target slots for an agent's 2 waves.
+
+    wave1 → same slot as agent
+    wave2 → next slot (wrapping 6→1)
+
+    Args:
+        slot_id: The agent's slot ID (1-6)
+
+    Returns:
+        List of 2 target slot IDs
+    """
+    wave1_target = slot_id
+    wave2_target = (slot_id % 6) + 1
+    return [wave1_target, wave2_target]
+
+
 def _submit_decomposition_job(
     audio_path: "Path",
     session_id: str,
@@ -88,6 +106,7 @@ def _submit_decomposition_job(
     target_slot_id: int | None = None,
     summary_text: str | None = None,
     n_waves: int = 2,
+    target_slots: list[int] | None = None,
 ) -> None:
     """Submit a decomposition job (non-blocking, best-effort).
 
@@ -100,6 +119,7 @@ def _submit_decomposition_job(
         turn_index: Turn number (1, 2, 3, or -1 for summary)
         summary_text: For turn_index=-1, the summary text to include in the event
         n_waves: Number of wave files to produce (default: 2, use 6 for summary)
+        target_slots: Target slot IDs for frequency mapping (e.g., [1, 2] for agent in slot 1)
     """
     if not settings.waves_enabled:
         return
@@ -121,6 +141,7 @@ def _submit_decomposition_job(
             target_slot_id=target_slot_id,
             summary_text=summary_text,
             n_waves=n_waves,
+            target_slots=target_slots,
         )
 
         pool = get_worker_pool()
@@ -423,6 +444,7 @@ async def process_turn1_slot(
                 slot_id=slot_id,
                 agent_id=agent_id,
                 voice_profile=response.voice_profile,
+                target_slots=_compute_target_slots_for_agent(slot_id),
             )
 
             # Add to manifest
@@ -698,6 +720,7 @@ async def process_turn2_slot(
                 agent_id=agent_id,
                 voice_profile=response.voice_profile,
                 target_slot_id=response.targetSlotId,
+                target_slots=_compute_target_slots_for_agent(slot_id),
             )
 
             # Add to manifest
@@ -1006,6 +1029,7 @@ async def process_turn3_slot(
                 slot_id=slot_id,
                 agent_id=agent_id,
                 voice_profile=response.voice_profile,
+                target_slots=_compute_target_slots_for_agent(slot_id),
             )
 
             # Add to manifest
@@ -1320,6 +1344,7 @@ async def execute_summary(
                 voice_profile=response.voice_profile,
                 summary_text=response.text,  # Pass text for event emission
                 n_waves=6,  # 6 waves for 6 speaker slots
+                target_slots=[1, 2, 3, 4, 5, 6],  # Direct mapping: wave N → slot N
             )
 
             # Add to manifest

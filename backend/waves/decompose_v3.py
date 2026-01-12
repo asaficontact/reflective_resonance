@@ -21,6 +21,17 @@ import soundfile as sf
 logger = logging.getLogger(__name__)
 
 
+# Slot-specific frequency ranges (symmetric "dome" pattern: high-mid-low-low-mid-high)
+SLOT_FREQ_RANGES: dict[int, tuple[float, float]] = {
+    1: (80.0, 100.0),   # Outer high
+    2: (50.0, 70.0),    # Middle medium
+    3: (20.0, 40.0),    # Center low
+    4: (20.0, 40.0),    # Center low
+    5: (50.0, 70.0),    # Middle medium
+    6: (80.0, 100.0),   # Outer high
+}
+
+
 @dataclass
 class DecomposeResult:
     """Result from audio decomposition job."""
@@ -80,21 +91,71 @@ def _calculate_envelope(signal: np.ndarray) -> np.ndarray:
     return librosa.feature.rms(y=signal, frame_length=512, hop_length=128, center=True)[0]
 
 
+def _synthesize_with_freq_range(
+    f0_interp: np.ndarray,
+    min_f0: float,
+    max_f0: float,
+    target_freq_range: tuple[float, float],
+    amplitude_env: np.ndarray,
+    sr: int,
+) -> np.ndarray:
+    """
+    Synthesize a wave with frequency mapped to a target range.
+
+    Preserves pitch contour: higher original pitch → higher output within range.
+
+    Args:
+        f0_interp: Interpolated f0 at sample rate
+        min_f0: Minimum f0 from original audio
+        max_f0: Maximum f0 from original audio
+        target_freq_range: (min_freq, max_freq) for this wave's target slot
+        amplitude_env: Amplitude envelope (extracted from harmonic)
+        sr: Sample rate
+
+    Returns:
+        Synthesized wave with frequency in target range
+    """
+    min_freq, max_freq = target_freq_range
+
+    # Map f0 to target frequency range (preserving pitch contour)
+    f0_mapped = np.zeros_like(f0_interp)
+    mask = f0_interp > 0
+    if max_f0 > min_f0:
+        # Linear mapping: original pitch range → target frequency range
+        f0_mapped[mask] = min_freq + (f0_interp[mask] - min_f0) / (max_f0 - min_f0) * (max_freq - min_freq)
+    else:
+        # Fallback: use midpoint of range
+        f0_mapped[mask] = (min_freq + max_freq) / 2
+
+    # Synthesize wave (no harmonic multiplication - frequency determined by slot)
+    phase = np.cumsum(2 * np.pi * f0_mapped / sr)
+    wave = amplitude_env * np.cos(phase)
+    return wave
+
+
 def decompose_audio_to_waves(
     input_path: str,
     output_dir: str,
     n_waves: int = 2,
+    target_slots: list[int] | None = None,
 ) -> DecomposeResult:
     """
-    Decompose a TTS WAV into N wave components (harmonics 1 through N).
+    Decompose a TTS WAV into N wave components with slot-aware frequency mapping.
 
-    Uses dynamic gain to force the mix envelope to perfectly match original envelope.
-    Calculates loss metrics: RMSE, NRMSE, SNR (dB), and envelope correlation.
+    Each wave's frequency is mapped to its target slot's frequency range:
+    - Slot 1, 6: 80-100Hz (outer high)
+    - Slot 2, 5: 50-70Hz (middle medium)
+    - Slot 3, 4: 20-40Hz (center low)
+
+    Amplitude envelopes are extracted from harmonics for natural sound variation.
+    Uses dynamic gain to force the mix envelope to match original envelope.
 
     Args:
         input_path: Absolute path to input WAV file
         output_dir: Directory for output wave files
         n_waves: Number of wave files to produce (default: 2)
+        target_slots: Target slot ID for each wave (e.g., [1, 2] for agent in slot 1).
+                      If None, falls back to legacy behavior (15-80Hz base frequency).
 
     Returns:
         DecomposeResult with success status and output paths
@@ -142,26 +203,36 @@ def decompose_audio_to_waves(
         times_frames = librosa.frames_to_time(np.arange(len(f0)), sr=sr, hop_length=hop_length)
         f0_interp = np.interp(times_samples, times_frames, f0_clean)
 
-        # Frequency Mapping Logic (15Hz - 80Hz)
+        # Extract f0 range for frequency mapping
         valid_f0 = f0_clean[f0_clean > 0]
         if len(valid_f0) > 0:
-            min_f0 = np.min(valid_f0)
-            max_f0 = np.max(valid_f0)
+            min_f0 = float(np.min(valid_f0))
+            max_f0 = float(np.max(valid_f0))
             if max_f0 == min_f0:
                 max_f0 += 1.0
+        else:
+            # Fallback for silent/unvoiced audio
+            min_f0, max_f0 = 100.0, 300.0
 
+        # Determine if using slot-aware frequency mapping
+        use_slot_mapping = (
+            target_slots is not None
+            and len(target_slots) == n_waves
+            and all(slot in SLOT_FREQ_RANGES for slot in target_slots)
+        )
+
+        # Legacy frequency mapping (only used if target_slots not provided)
+        if not use_slot_mapping:
             f0_mapped = np.zeros_like(f0_interp)
             mask = f0_interp > 0
             f0_mapped[mask] = 15.0 + (f0_interp[mask] - min_f0) / (max_f0 - min_f0) * (80.0 - 15.0)
-        else:
-            f0_mapped = f0_interp
 
         # Extract harmonic amplitudes (STFT)
         n_fft = 512
         S = np.abs(librosa.stft(y, n_fft=n_fft, hop_length=hop_length))
         freqs = librosa.fft_frequencies(sr=sr, n_fft=n_fft)
 
-        # Extract amplitude envelopes for N harmonics
+        # Extract amplitude envelopes for N harmonics (used for natural sound variation)
         amplitudes = []
         for harmonic_num in range(1, n_waves + 1):
             amp = _extract_harmonic_amp(
@@ -172,8 +243,17 @@ def decompose_audio_to_waves(
         # Synthesize N raw waves
         raw_waves = []
         for i, amp in enumerate(amplitudes):
-            harmonic_num = i + 1
-            raw_wave = _synthesize_raw(f0_mapped, harmonic_num, amp, sr)
+            if use_slot_mapping:
+                # NEW: Use slot-specific frequency range
+                target_slot = target_slots[i]
+                freq_range = SLOT_FREQ_RANGES[target_slot]
+                raw_wave = _synthesize_with_freq_range(
+                    f0_interp, min_f0, max_f0, freq_range, amp, sr
+                )
+            else:
+                # Legacy: Use harmonic multiplication with base frequency
+                harmonic_num = i + 1
+                raw_wave = _synthesize_raw(f0_mapped, harmonic_num, amp, sr)
             raw_waves.append(raw_wave)
 
         # Compute raw mix (sum of all waves)

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Reflective Resonance is an interactive art installation with 6 speaker slots controlled by LLM agents. Users assign AI agents to speaker positions, provide input via push-to-talk audio (transcribed via ElevenLabs STT), and receive parallel streaming responses through a 3-turn workflow. Responses are converted to speech via ElevenLabs TTS.
+Reflective Resonance is an interactive art installation with 6 speaker slots controlled by LLM agents. Users assign AI agents to speaker positions, provide input via push-to-talk audio (transcribed via ElevenLabs STT), and receive parallel streaming responses through a 4-turn workflow. Responses are converted to speech via ElevenLabs TTS, then decomposed into wave components for water speaker control.
 
 ## Commands
 
@@ -31,30 +31,42 @@ curl http://localhost:8000/v1/agents             # List agents
 curl -N -X POST http://localhost:8000/v1/chat \
   -H "Content-Type: application/json" \
   -d '{"message":"Hello","slots":[{"slotId":1,"agentId":"gpt-4o"}]}'
+# Test WebSocket events (for TouchDesigner):
+wscat -c ws://localhost:8000/v1/events
 ```
 
 ## Architecture
 
-### 3-Turn Workflow (backend/workflow.py)
-The core workflow processes user input through three sequential turns:
+### 4-Turn Workflow (backend/workflow.py)
+The core workflow processes user input through four sequential turns:
 1. **Turn 1 (Respond)**: All slots respond to user message in parallel
 2. **Turn 2 (Comment)**: Each slot comments on exactly one peer's response
 3. **Turn 3 (Reply)**: Slots that received comments reply to them
+4. **Turn 4 (Summary)**: Single agent synthesizes all responses into a poetic summary
 
-Each turn generates both LLM text and TTS audio (WAV files via ElevenLabs).
+Each turn generates LLM text → TTS audio (WAV) → Wave decomposition (for water speakers).
 
 ### Backend Structure
 ```
 backend/
-├── main.py           # FastAPI routes: /v1/chat (SSE), /v1/stt, /v1/agents, /v1/health
-├── workflow.py       # 3-turn orchestrator with parallel LLM + TTS generation
+├── main.py           # FastAPI routes: /v1/chat (SSE), /v1/stt, /v1/agents, /v1/events (WS)
+├── workflow.py       # 4-turn orchestrator with parallel LLM + TTS generation
 ├── streaming.py      # SSE event delegation to workflow
 ├── sessions.py       # TTS session management (artifacts/tts/sessions/<uuid>/)
 ├── prompts/          # Jinja2 templates for each turn's LLM prompt
 ├── tts/              # ElevenLabs TTS client, voice profiles, WAV generation
 ├── stt/              # ElevenLabs Scribe STT client for audio input
 ├── agents.py         # Agent registry mapping AgentId → LiteLLM model
-└── models.py         # Pydantic models for API requests/responses and SSE events
+├── models.py         # Pydantic models for API requests/responses and SSE events
+├── waves/            # Audio decomposition for water speakers
+│   ├── decompose_v3.py  # Harmonic extraction with slot-aware frequency mapping
+│   ├── worker.py        # ProcessPoolExecutor for CPU-bound decomposition
+│   └── paths.py         # Wave file path utilities
+└── events/           # TouchDesigner WebSocket integration
+    ├── orchestrator.py  # Coordinates wave readiness → WS event emission
+    ├── websocket.py     # WebSocket endpoint handler
+    ├── models.py        # WS event payloads (Turn1Waves, Dialogue, Summary)
+    └── state.py         # Per-session tracking (slots ready, dialogues, etc.)
 ```
 
 ### Frontend Structure
@@ -67,11 +79,28 @@ frontend/src/
 │   ├── components/
 │   │   ├── AudioInputDock.svelte # Push-to-talk microphone input
 │   │   ├── SpeakerSlots.svelte   # 3x2 grid of speaker slots
-│   │   └── ResponsesPanel.svelte # Turn tabs (T1/T2/T3) with responses
+│   │   └── ResponsesPanel.svelte # Turn tabs (T1/T2/T3/T4) with responses
 │   └── config/agents.ts          # Agent display info (colors, icons)
 ```
 
-### SSE Event Protocol
+### Wave Decomposition System (backend/waves/)
+TTS audio is decomposed into wave components for water speaker control:
+- **Slot-aware frequency mapping**: Each slot has a target frequency range
+  - Slots 1, 6: 80-100Hz (outer high)
+  - Slots 2, 5: 50-70Hz (middle medium)
+  - Slots 3, 4: 20-40Hz (center low)
+- **Turn 1/2/3**: 2 waves per agent (wave1→same slot, wave2→next slot)
+- **Turn 4 (Summary)**: 6 waves, one per slot
+- Runs in ProcessPoolExecutor (CPU-bound librosa operations)
+
+### WebSocket Events (backend/events/)
+TouchDesigner connects to `ws://localhost:8000/v1/events` to receive:
+- `user_sentiment` - Detected mood (positive/neutral/negative) for loading effects
+- `turn1.waves.ready` - All Turn 1 wave files ready with paths
+- `dialogue.waves.ready` - Turn 2+3 dialogue pairs ready
+- `final_summary.ready` - Turn 4 summary waves ready (6 waves for 6 slots)
+
+### SSE Event Protocol (Frontend)
 Events flow from backend to frontend during `/v1/chat`:
 - `turn.start` / `turn.done` - Turn lifecycle
 - `slot.start` / `slot.done` / `slot.error` - Per-slot LLM completion
@@ -85,10 +114,15 @@ artifacts/
 │   ├── turn_1/*.wav
 │   ├── turn_2/*.wav
 │   ├── turn_3/*.wav
+│   ├── summary/*.wav             # Turn 4 summary audio
 │   └── session.json              # Manifest for TouchDesigner
+├── waves/sessions/<session_id>/  # Decomposed wave files
+│   ├── turn_1/*_wave1.wav, *_wave2.wav
+│   ├── turn_2/*_wave1.wav, *_wave2.wav
+│   ├── turn_3/*_wave1.wav, *_wave2.wav
+│   └── summary/*_wave1.wav through *_wave6.wav
 └── stt/sessions/<session_id>/    # STT inputs
     ├── input.webm
-    ├── transcript.json
     └── transcript.txt
 ```
 
@@ -124,11 +158,13 @@ Optional (RR_ prefix):
 - `RR_HOST`, `RR_PORT`, `RR_CORS_ORIGINS`
 - `RR_TEMPERATURE`, `RR_MAX_TOKENS`, `RR_TIMEOUT_S`
 - `RR_DEFAULT_SYSTEM_PROMPT`
+- `RR_WAVES_ENABLED` - Enable/disable wave decomposition
+- `RR_EVENTS_WS_ENABLED` - Enable/disable WebSocket events
 
 ## Type Definitions
 
 Frontend and backend share these core types (defined separately but aligned):
 - `AgentId`: `'claude-sonnet-4-5' | 'claude-opus-4-5' | 'gpt-5.2' | 'gpt-5.1' | 'gpt-4o' | 'gemini-3'`
 - `SlotId`: `1 | 2 | 3 | 4 | 5 | 6`
-- `TurnIndex`: `1 | 2 | 3`
-- `MessageKind`: `'response' | 'comment' | 'reply'`
+- `TurnIndex`: `1 | 2 | 3 | 4`
+- `MessageKind`: `'response' | 'comment' | 'reply' | 'summary'`

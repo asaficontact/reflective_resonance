@@ -32,6 +32,7 @@ class DecomposeJob:
     target_slot_id: int | None = None
     summary_text: str | None = None  # For turn_index=-1 (summary) only
     n_waves: int = 2  # Number of wave files to produce
+    target_slots: list[int] | None = None  # Target slot for each wave (for frequency mapping)
     submitted_at: float = field(default_factory=time.time)
 
 
@@ -225,6 +226,7 @@ class WavesWorkerPool:
                     str(job.input_path),
                     str(job.output_dir),
                     job.n_waves,
+                    job.target_slots,  # Pass target slots for frequency mapping
                 ),
                 timeout=self._job_timeout_s,
             )
