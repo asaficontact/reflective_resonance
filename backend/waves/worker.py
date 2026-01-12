@@ -31,6 +31,7 @@ class DecomposeJob:
     output_dir: Path
     target_slot_id: int | None = None
     summary_text: str | None = None  # For turn_index=-1 (summary) only
+    n_waves: int = 2  # Number of wave files to produce
     submitted_at: float = field(default_factory=time.time)
 
 
@@ -223,6 +224,7 @@ class WavesWorkerPool:
                     decompose_audio_to_waves,
                     str(job.input_path),
                     str(job.output_dir),
+                    job.n_waves,
                 ),
                 timeout=self._job_timeout_s,
             )

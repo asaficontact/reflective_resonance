@@ -40,7 +40,7 @@ def tts_path_to_waves_dir(
 
 def get_wave_output_paths(base_name: str, output_dir: Path) -> tuple[Path, Path]:
     """
-    Get the wave output file paths for a given base name.
+    Get the wave output file paths for a given base name (2 waves).
 
     Args:
         base_name: The base filename without extension (e.g., "slot-1_gpt-5.1_friendly_casual")
@@ -53,3 +53,21 @@ def get_wave_output_paths(base_name: str, output_dir: Path) -> tuple[Path, Path]
         output_dir / f"{base_name}_v3_wave1.wav",
         output_dir / f"{base_name}_v3_wave2.wav",
     )
+
+
+def get_wave_output_paths_n(base_name: str, output_dir: Path, n_waves: int) -> list[Path]:
+    """
+    Get the wave output file paths for N waves.
+
+    Args:
+        base_name: The base filename without extension
+        output_dir: The output directory path
+        n_waves: Number of wave files
+
+    Returns:
+        List of N wave paths [wave1, wave2, ..., waveN]
+    """
+    return [
+        output_dir / f"{base_name}_v3_wave{i}.wav"
+        for i in range(1, n_waves + 1)
+    ]

@@ -20,6 +20,7 @@ from backend.events.models import (
     FinalSummaryWavesPayload,
     PlayOrderItem,
     SlotWaveInfo,
+    SummarySlotWave,
     SummaryWaveInfo,
     Turn1WavesPayload,
     UserSentimentPayload,
@@ -326,8 +327,9 @@ class EventsOrchestrator:
                 voice_profile=voice_profile,
                 tts_basename=tts_basename,
                 text=summary_text,
+                n_waves=job.n_waves,  # Pass n_waves from job (6 for summary)
             )
-            logger.debug(f"Summary waves ready for session {session_id}")
+            logger.debug(f"Summary waves ready for session {session_id}, n_waves={job.n_waves}")
 
             # Emit final_summary.ready event
             await self.emit_final_summary_ready(
@@ -336,6 +338,7 @@ class EventsOrchestrator:
                 voice_profile=voice_profile,
                 tts_basename=tts_basename,
                 success=decompose_result.success,
+                n_waves=job.n_waves,  # Pass n_waves for event payload
             )
             return
 
@@ -647,8 +650,9 @@ class EventsOrchestrator:
         voice_profile: str,
         tts_basename: str,
         success: bool,
+        n_waves: int = 6,
     ) -> None:
-        """Emit final_summary.ready event.
+        """Emit final_summary.ready event with 6 waves mapped to slots.
 
         Called after summary wave decomposition completes.
 
@@ -658,6 +662,7 @@ class EventsOrchestrator:
             voice_profile: Voice profile used for TTS
             tts_basename: Base filename for wave file path derivation
             success: Whether summary generation succeeded
+            n_waves: Number of wave files (default: 6 for 6 slots)
         """
         state = self._sessions.get(session_id)
         if not state or state.summary_emitted:
@@ -670,18 +675,26 @@ class EventsOrchestrator:
                 voice_profile=voice_profile,
                 tts_basename=tts_basename,
                 text=text,
+                n_waves=n_waves,
             )
-            wave1_abs, wave1_rel, wave2_abs, wave2_rel = meta.derive_wave_paths(session_id)
+            wave_paths = meta.derive_wave_paths(session_id)
+
+            # Build list of SummarySlotWave (6 waves mapped to slots 1-6)
+            waves = [
+                SummarySlotWave(
+                    slotId=slot_id,
+                    wavePathAbs=wave_abs,
+                    wavePathRel=wave_rel,
+                )
+                for slot_id, wave_abs, wave_rel in wave_paths
+            ]
 
             payload = FinalSummaryWavesPayload(
                 status="complete",
                 text=text,
                 waveInfo=SummaryWaveInfo(
                     voiceProfile=voice_profile,
-                    wave1PathAbs=wave1_abs,
-                    wave1PathRel=wave1_rel,
-                    wave2PathAbs=wave2_abs,
-                    wave2PathRel=wave2_rel,
+                    waves=waves,
                 ),
             )
         else:
@@ -699,7 +712,7 @@ class EventsOrchestrator:
         )
 
         await self._send_event(event)
-        logger.info(f"Emitted final_summary.ready: session={session_id}, status={payload.status}")
+        logger.info(f"Emitted final_summary.ready: session={session_id}, status={payload.status}, waves={n_waves}")
 
     # -------------------------------------------------------------------------
     # Internal: Timeout handlers

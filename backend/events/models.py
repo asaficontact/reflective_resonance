@@ -109,14 +109,23 @@ class UserSentimentPayload(BaseModel):
     )
 
 
+class SummarySlotWave(BaseModel):
+    """Wave file info for a single slot in summary."""
+
+    slotId: int = Field(ge=1, le=6, description="Target slot ID (1-6)")
+    wavePathAbs: str = Field(description="Absolute path to wave file")
+    wavePathRel: str = Field(description="Relative path under artifacts/")
+
+
 class SummaryWaveInfo(BaseModel):
-    """Wave file info for summary."""
+    """Wave file info for summary (6 waves mapped to 6 slots)."""
 
     voiceProfile: str = Field(description="Voice profile used for TTS")
-    wave1PathAbs: str = Field(description="Absolute path to wave1 file")
-    wave1PathRel: str = Field(description="Relative path to wave1 under artifacts/")
-    wave2PathAbs: str = Field(description="Absolute path to wave2 file")
-    wave2PathRel: str = Field(description="Relative path to wave2 under artifacts/")
+    waves: list[SummarySlotWave] = Field(
+        min_length=6,
+        max_length=6,
+        description="6 wave files, one per slot"
+    )
 
 
 class FinalSummaryWavesPayload(BaseModel):

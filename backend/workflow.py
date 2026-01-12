@@ -87,6 +87,7 @@ def _submit_decomposition_job(
     voice_profile: str,
     target_slot_id: int | None = None,
     summary_text: str | None = None,
+    n_waves: int = 2,
 ) -> None:
     """Submit a decomposition job (non-blocking, best-effort).
 
@@ -98,6 +99,7 @@ def _submit_decomposition_job(
         session_id: The workflow session ID
         turn_index: Turn number (1, 2, 3, or -1 for summary)
         summary_text: For turn_index=-1, the summary text to include in the event
+        n_waves: Number of wave files to produce (default: 2, use 6 for summary)
     """
     if not settings.waves_enabled:
         return
@@ -118,6 +120,7 @@ def _submit_decomposition_job(
             output_dir=output_dir,
             target_slot_id=target_slot_id,
             summary_text=summary_text,
+            n_waves=n_waves,
         )
 
         pool = get_worker_pool()
@@ -1307,7 +1310,7 @@ async def execute_summary(
                 )
             )
 
-            # Submit decomposition job (slot_id=-1 for summary)
+            # Submit decomposition job (slot_id=-1 for summary, n_waves=6 for 6 slots)
             _submit_decomposition_job(
                 audio_path,
                 session_id,
@@ -1316,6 +1319,7 @@ async def execute_summary(
                 agent_id="gpt-4o",
                 voice_profile=response.voice_profile,
                 summary_text=response.text,  # Pass text for event emission
+                n_waves=6,  # 6 waves for 6 speaker slots
             )
 
             # Add to manifest

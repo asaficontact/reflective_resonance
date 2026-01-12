@@ -50,22 +50,24 @@ class SummaryMeta:
     voice_profile: str
     tts_basename: str
     text: str
+    n_waves: int = 6  # Number of waves for summary (6 for 6 slots)
 
-    def derive_wave_paths(self, session_id: str) -> tuple[str, str, str, str]:
-        """Derive wave paths for summary (uses special 'summary' directory).
+    def derive_wave_paths(self, session_id: str) -> list[tuple[int, str, str]]:
+        """Derive wave paths for summary (6 waves mapped to slots 1-6).
 
         Returns:
-            Tuple of (wave1_abs, wave1_rel, wave2_abs, wave2_rel)
+            List of tuples: [(slot_id, wave_abs, wave_rel), ...]
         """
         base_rel = f"waves/sessions/{session_id}/summary/{self.tts_basename}_v3"
 
-        wave1_rel = f"{base_rel}_wave1.wav"
-        wave2_rel = f"{base_rel}_wave2.wav"
+        paths = []
+        for i in range(1, self.n_waves + 1):
+            wave_rel = f"{base_rel}_wave{i}.wav"
+            wave_abs = str((Path("artifacts") / wave_rel).resolve())
+            slot_id = i  # wave1 → slot 1, wave2 → slot 2, etc.
+            paths.append((slot_id, wave_abs, wave_rel))
 
-        wave1_abs = str((Path("artifacts") / wave1_rel).resolve())
-        wave2_abs = str((Path("artifacts") / wave2_rel).resolve())
-
-        return (wave1_abs, wave1_rel, wave2_abs, wave2_rel)
+        return paths
 
 
 @dataclass

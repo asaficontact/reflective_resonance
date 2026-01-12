@@ -28,8 +28,8 @@ class DecomposeResult:
     success: bool
     input_path: str
     output_dir: str
-    wave1_path: str | None = None
-    wave2_path: str | None = None
+    wave_paths: list[str] = field(default_factory=list)  # List of N wave paths
+    n_waves: int = 2  # Number of waves produced
     rmse: float | None = None
     nrmse: float | None = None
     snr_db: float | None = None
@@ -80,9 +80,13 @@ def _calculate_envelope(signal: np.ndarray) -> np.ndarray:
     return librosa.feature.rms(y=signal, frame_length=512, hop_length=128, center=True)[0]
 
 
-def decompose_audio_to_waves(input_path: str, output_dir: str) -> DecomposeResult:
+def decompose_audio_to_waves(
+    input_path: str,
+    output_dir: str,
+    n_waves: int = 2,
+) -> DecomposeResult:
     """
-    Decompose a TTS WAV into 2 wave components (fundamental + 1st harmonic).
+    Decompose a TTS WAV into N wave components (harmonics 1 through N).
 
     Uses dynamic gain to force the mix envelope to perfectly match original envelope.
     Calculates loss metrics: RMSE, NRMSE, SNR (dB), and envelope correlation.
@@ -90,6 +94,7 @@ def decompose_audio_to_waves(input_path: str, output_dir: str) -> DecomposeResul
     Args:
         input_path: Absolute path to input WAV file
         output_dir: Directory for output wave files
+        n_waves: Number of wave files to produce (default: 2)
 
     Returns:
         DecomposeResult with success status and output paths
@@ -156,14 +161,23 @@ def decompose_audio_to_waves(input_path: str, output_dir: str) -> DecomposeResul
         S = np.abs(librosa.stft(y, n_fft=n_fft, hop_length=hop_length))
         freqs = librosa.fft_frequencies(sr=sr, n_fft=n_fft)
 
-        amp1 = _extract_harmonic_amp(S, f0_clean, 1, sr, n_fft, freqs, times_samples, times_frames)
-        amp2 = _extract_harmonic_amp(S, f0_clean, 2, sr, n_fft, freqs, times_samples, times_frames)
+        # Extract amplitude envelopes for N harmonics
+        amplitudes = []
+        for harmonic_num in range(1, n_waves + 1):
+            amp = _extract_harmonic_amp(
+                S, f0_clean, harmonic_num, sr, n_fft, freqs, times_samples, times_frames
+            )
+            amplitudes.append(amp)
 
-        # Synthesize Base Waves (2 harmonics)
-        raw_wave1 = _synthesize_raw(f0_mapped, 1, amp1, sr)
-        raw_wave2 = _synthesize_raw(f0_mapped, 2, amp2, sr)
+        # Synthesize N raw waves
+        raw_waves = []
+        for i, amp in enumerate(amplitudes):
+            harmonic_num = i + 1
+            raw_wave = _synthesize_raw(f0_mapped, harmonic_num, amp, sr)
+            raw_waves.append(raw_wave)
 
-        raw_mix = raw_wave1 + raw_wave2
+        # Compute raw mix (sum of all waves)
+        raw_mix = np.sum(raw_waves, axis=0)
 
         # V3 Dynamic Amplitude Matching
         env_original_frames = _calculate_envelope(y)
@@ -179,9 +193,9 @@ def decompose_audio_to_waves(input_path: str, output_dir: str) -> DecomposeResul
         # Apply Gain Curve (cap to avoid exploding on silence/noise)
         gain_curve = np.clip(gain_curve, 0, 10.0)
 
-        wave1 = raw_wave1 * gain_curve
-        wave2 = raw_wave2 * gain_curve
-        mix = wave1 + wave2
+        # Apply gain to all waves
+        final_waves = [raw_wave * gain_curve for raw_wave in raw_waves]
+        mix = np.sum(final_waves, axis=0)
 
         # Calculate Loss Metrics
         mse = np.mean((y - mix) ** 2)
@@ -196,13 +210,14 @@ def decompose_audio_to_waves(input_path: str, output_dir: str) -> DecomposeResul
         min_len = min(len(env_original_frames), len(env_mix_final))
         env_corr = float(np.corrcoef(env_original_frames[:min_len], env_mix_final[:min_len])[0, 1])
 
-        # Save files (wave1 and wave2 only, no wave_mix)
+        # Save N wave files
         base_name = input_path_obj.stem
-        out1 = output_dir_obj / f"{base_name}_v3_wave1.wav"
-        out2 = output_dir_obj / f"{base_name}_v3_wave2.wav"
-
-        sf.write(str(out1), wave1, sr)
-        sf.write(str(out2), wave2, sr)
+        wave_paths = []
+        for i, wave in enumerate(final_waves):
+            wave_num = i + 1
+            out_path = output_dir_obj / f"{base_name}_v3_wave{wave_num}.wav"
+            sf.write(str(out_path), wave, sr)
+            wave_paths.append(str(out_path))
 
         duration_ms = (time.time() - start_time) * 1000
 
@@ -210,8 +225,8 @@ def decompose_audio_to_waves(input_path: str, output_dir: str) -> DecomposeResul
             success=True,
             input_path=input_path,
             output_dir=output_dir,
-            wave1_path=str(out1),
-            wave2_path=str(out2),
+            wave_paths=wave_paths,
+            n_waves=n_waves,
             rmse=rmse,
             nrmse=nrmse,
             snr_db=snr_db,
