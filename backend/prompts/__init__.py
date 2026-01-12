@@ -1,6 +1,9 @@
 """Prompt templates for the 3-turn workflow.
 
 Uses rawagents PromptManager for Jinja2 template rendering.
+
+Note: Voice profiles are defined in the system prompt (config.py),
+not repeated in individual turn prompts.
 """
 
 from pathlib import Path
@@ -12,24 +15,11 @@ _PROMPTS_DIR = Path(__file__).parent
 _manager = PromptManager(_PROMPTS_DIR)
 
 
-# Voice profile table for inclusion in prompts
-VOICE_PROFILES_TABLE = """
-| Profile | Character | Use For |
-|---------|-----------|---------|
-| friendly_casual | Young female, American, warm | Casual greetings, friendly chat |
-| warm_professional | Male, American, helpful | Advice, thoughtful answers |
-| energetic_upbeat | Young female, energetic | Excited responses, fun |
-| calm_soothing | Female, calm, gentle | Reassurance, patience |
-| confident_charming | Male, British, witty | Clever remarks, charm |
-| playful_expressive | Female, dynamic range | Playful banter, emotions |
-""".strip()
-
-
 def render_turn1_prompt(user_message: str) -> str:
     """Render the Turn 1 (response) prompt.
 
     Args:
-        user_message: The user's message to respond to.
+        user_message: The user's whispered message to reflect on.
 
     Returns:
         Rendered prompt string for Turn 1 LLM call.
@@ -37,7 +27,6 @@ def render_turn1_prompt(user_message: str) -> str:
     return _manager.render(
         "turn1_response.j2",
         user_message=user_message,
-        voice_profiles_table=VOICE_PROFILES_TABLE,
     )
 
 
@@ -64,7 +53,6 @@ def render_turn2_prompt(
         slot_id=slot_id,
         agent_id=agent_id,
         peer_responses=peer_responses,
-        voice_profiles_table=VOICE_PROFILES_TABLE,
     )
 
 
@@ -94,7 +82,6 @@ def render_turn3_prompt(
         agent_id=agent_id,
         original_response=original_response,
         received_comments=received_comments,
-        voice_profiles_table=VOICE_PROFILES_TABLE,
     )
 
 

@@ -58,7 +58,11 @@ class SpokenResponse(BaseModel):
     the text to speak and which voice profile to use.
     """
 
-    text: str = Field(min_length=1, description="The spoken response text")
+    text: str = Field(
+        min_length=1,
+        max_length=200,
+        description="The spoken response text (1-2 sentences)",
+    )
     voice_profile: VoiceProfileName = Field(description="Voice profile for TTS synthesis")
 
 
@@ -69,7 +73,7 @@ class CommentSelection(BaseModel):
     """
 
     targetSlotId: int = Field(ge=1, le=6, description="Slot to comment on (1-6, must differ from self)")
-    comment: str = Field(min_length=1, max_length=250, description="Single sentence comment")
+    comment: str = Field(min_length=1, max_length=150, description="Single sentence comment")
     voice_profile: VoiceProfileName = Field(description="Voice profile for TTS synthesis")
 
 
