@@ -38,15 +38,22 @@ class EventsOrchestrator:
     When a new client connects, the old one is disconnected.
     """
 
-    def __init__(self, turn1_timeout_s: float = 15.0, dialogue_timeout_s: float = 30.0):
+    def __init__(
+        self,
+        turn1_timeout_s: float = 15.0,
+        dialogue_timeout_s: float = 30.0,
+        workflow_timeout_s: float = 60.0,
+    ):
         """Initialize the orchestrator.
 
         Args:
-            turn1_timeout_s: Timeout for Turn 1 partial event emission
-            dialogue_timeout_s: Timeout for dialogue partial event emission
+            turn1_timeout_s: Timeout for Turn 1 partial event emission (legacy)
+            dialogue_timeout_s: Timeout for dialogue partial event emission (legacy)
+            workflow_timeout_s: Overall timeout for batch emission of all events
         """
         self._turn1_timeout_s = turn1_timeout_s
         self._dialogue_timeout_s = dialogue_timeout_s
+        self._workflow_timeout_s = workflow_timeout_s
 
         # Session state tracking
         self._sessions: dict[str, SessionEventsState] = {}
@@ -147,37 +154,32 @@ class EventsOrchestrator:
         if session_id in self._sessions:
             logger.warning(f"Session {session_id} already exists, resetting state")
 
+        slot_ids = {s.slot_id for s in slots}
         state = SessionEventsState(
             session_id=session_id,
-            turn1_expected={s.slot_id for s in slots},
+            turn1_expected=slot_ids,
+            turn2_expected=slot_ids,  # Same slots participate in Turn 2
         )
         self._sessions[session_id] = state
         logger.info(f"Session {session_id} initialized with {len(slots)} slots")
 
     def turn1_complete(self, session_id: str) -> None:
-        """Mark Turn 1 as complete and start timeout for partial event.
+        """Mark Turn 1 LLM/TTS as complete. Waves tracked but NOT emitted yet.
 
         Called after Turn 1 turn.done event in workflow.
-        Starts a timeout to emit partial event if not all wave-mix files are ready.
+        Note: Batch emission handles overall timeout, no individual timeout needed.
         """
         state = self._sessions.get(session_id)
         if not state:
             logger.warning(f"turn1_complete: Session {session_id} not found")
             return
 
-        logger.info(f"Session {session_id}: Turn 1 complete, starting wave-mix wait")
-
-        # Start timeout for partial emission
-        task_key = f"{session_id}_turn1"
-        if task_key not in self._timeout_tasks:
-            self._timeout_tasks[task_key] = asyncio.create_task(
-                self._turn1_timeout_handler(session_id)
-            )
+        logger.info(f"Session {session_id}: Turn 1 LLM/TTS complete, awaiting batch")
 
     def turn3_complete(
         self, session_id: str, dialogues: list[DialogueSpec]
     ) -> None:
-        """Mark Turn 3 as complete and set up dialogue tracking.
+        """Mark Turn 3 complete, compute expectations, start batch timeout.
 
         Called after Turn 3 turn.done event in workflow.
 
@@ -191,12 +193,26 @@ class EventsOrchestrator:
             return
 
         state.dialogues = dialogues
+        state.workflow_complete = True
+
+        # Compute Turn 3 expected slots from dialogues (respondents)
+        turn3_expected = {d.respondent.slot_id for d in dialogues if d.respondent}
+        state.turn3_expected = turn3_expected
+
         logger.info(
-            f"Session {session_id}: Turn 3 complete, {len(dialogues)} dialogues computed"
+            f"Session {session_id}: Turn 3 complete, "
+            f"{len(dialogues)} dialogues, Turn 3 slots: {turn3_expected}"
         )
 
-        # Check if any dialogues are already ready
-        asyncio.create_task(self._check_and_emit_dialogues(session_id))
+        # Start workflow timeout for batch emission
+        task_key = f"{session_id}_workflow"
+        if task_key not in self._timeout_tasks:
+            self._timeout_tasks[task_key] = asyncio.create_task(
+                self._workflow_timeout_handler(session_id)
+            )
+
+        # Check if already ready (wave jobs may have completed during Turn 3)
+        asyncio.create_task(self._check_and_emit_batch(session_id))
 
     def register_slot_metadata(
         self,
@@ -285,8 +301,10 @@ class EventsOrchestrator:
         turn_index = job.turn_index
 
         state = self._sessions.get(session_id)
-        if not state:
-            logger.debug(f"Result for unknown session {session_id}, ignoring")
+        if not state or state.batch_emitted:
+            # Unknown session or already emitted
+            if not state:
+                logger.debug(f"Result for unknown session {session_id}, ignoring")
             return
 
         if not decompose_result.success:
@@ -314,17 +332,24 @@ class EventsOrchestrator:
         if turn_index == 1:
             state.turn1_ready[slot_id] = meta
             logger.debug(
-                f"Turn 1 slot {slot_id} ready: {len(state.turn1_ready)}/{len(state.turn1_expected)}"
+                f"Turn 1 slot {slot_id} ready: "
+                f"{len(state.turn1_ready)}/{len(state.turn1_expected)}"
             )
-            await self._check_and_emit_turn1(session_id)
         elif turn_index == 2:
             state.turn2_ready[slot_id] = meta
-            logger.debug(f"Turn 2 slot {slot_id} ready")
-            await self._check_and_emit_dialogues(session_id)
+            logger.debug(
+                f"Turn 2 slot {slot_id} ready: "
+                f"{len(state.turn2_ready)}/{len(state.turn2_expected)}"
+            )
         elif turn_index == 3:
             state.turn3_ready[slot_id] = meta
-            logger.debug(f"Turn 3 slot {slot_id} ready")
-            await self._check_and_emit_dialogues(session_id)
+            logger.debug(
+                f"Turn 3 slot {slot_id} ready: "
+                f"{len(state.turn3_ready)}/{len(state.turn3_expected)}"
+            )
+
+        # Check batch readiness (unified check replaces individual checks)
+        await self._check_and_emit_batch(session_id)
 
     # -------------------------------------------------------------------------
     # Internal: Event emission
@@ -490,6 +515,44 @@ class EventsOrchestrator:
             f"dialogue={dialogue.dialogue_id}"
         )
 
+    async def _check_and_emit_batch(self, session_id: str) -> None:
+        """Check if all waves ready and emit batch of events."""
+        state = self._sessions.get(session_id)
+        if not state or state.batch_emitted or not state.workflow_complete:
+            return
+
+        if not state.is_all_waves_ready():
+            return
+
+        await self._emit_batch(session_id, partial=False)
+
+    async def _emit_batch(self, session_id: str, partial: bool) -> None:
+        """Emit turn1.waves.ready + all dialogue.waves.ready as batch."""
+        state = self._sessions.get(session_id)
+        if not state or state.batch_emitted:
+            return
+
+        state.batch_emitted = True
+
+        # Cancel workflow timeout
+        task_key = f"{session_id}_workflow"
+        if task_key in self._timeout_tasks:
+            self._timeout_tasks[task_key].cancel()
+            del self._timeout_tasks[task_key]
+
+        # 1. Emit Turn 1 event
+        await self._emit_turn1_event(session_id, partial)
+
+        # 2. Emit all ready dialogues immediately after
+        for dialogue in state.get_ready_dialogues():
+            if dialogue.dialogue_id not in state.dialogues_emitted:
+                await self._emit_dialogue_event(session_id, dialogue)
+
+        logger.info(
+            f"Batch emission complete: session={session_id}, "
+            f"partial={partial}, dialogues={len(state.get_ready_dialogues())}"
+        )
+
     async def _send_event(self, event: EventEnvelope) -> None:
         """Send an event to the WebSocket client."""
         async with self._ws_lock:
@@ -545,17 +608,17 @@ class EventsOrchestrator:
     # Internal: Timeout handlers
     # -------------------------------------------------------------------------
 
-    async def _turn1_timeout_handler(self, session_id: str) -> None:
-        """Handle Turn 1 timeout - emit partial event if not all ready."""
+    async def _workflow_timeout_handler(self, session_id: str) -> None:
+        """Emit partial batch if timeout reached before all ready."""
         try:
-            await asyncio.sleep(self._turn1_timeout_s)
+            await asyncio.sleep(self._workflow_timeout_s)
 
             state = self._sessions.get(session_id)
-            if state and not state.turn1_emitted:
-                logger.info(
-                    f"Turn 1 timeout for session {session_id}, emitting partial event"
+            if state and not state.batch_emitted:
+                logger.warning(
+                    f"Workflow timeout for {session_id}, emitting partial batch"
                 )
-                await self._emit_turn1_event(session_id, partial=True)
+                await self._emit_batch(session_id, partial=True)
         except asyncio.CancelledError:
             pass
 
@@ -576,6 +639,7 @@ def get_orchestrator() -> EventsOrchestrator:
         _orchestrator = EventsOrchestrator(
             turn1_timeout_s=settings.events_turn1_timeout_s,
             dialogue_timeout_s=settings.events_dialogue_timeout_s,
+            workflow_timeout_s=settings.events_workflow_timeout_s,
         )
     return _orchestrator
 

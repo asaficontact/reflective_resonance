@@ -71,9 +71,19 @@ class SessionEventsState:
     # Turn 3 tracking (for dialogue construction)
     turn3_ready: dict[int, SlotMeta] = field(default_factory=dict)  # slot_id -> metadata
 
+    # Turn 2 expected (for batch readiness check)
+    turn2_expected: set[int] = field(default_factory=set)
+
+    # Turn 3 expected (for batch readiness check)
+    turn3_expected: set[int] = field(default_factory=set)
+
     # Dialogue tracking
     dialogues: list[DialogueSpec] = field(default_factory=list)
     dialogues_emitted: set[str] = field(default_factory=set)  # dialogue_ids already sent
+
+    # Workflow completion tracking for batch emission
+    workflow_complete: bool = False  # True after turn3_complete() called
+    batch_emitted: bool = False  # True after batch emission (prevents duplicates)
 
     # Sequence counter for events
     seq_counter: int = 0
@@ -112,3 +122,29 @@ class SessionEventsState:
                 return False
 
         return True
+
+    def is_turn2_complete(self) -> bool:
+        """Check if all expected Turn 2 slots have waves ready."""
+        if not self.turn2_expected:
+            return True  # No Turn 2 expected (edge case)
+        return self.turn2_expected <= set(self.turn2_ready.keys())
+
+    def is_turn3_complete(self) -> bool:
+        """Check if all expected Turn 3 slots have waves ready."""
+        if not self.turn3_expected:
+            return True  # No Turn 3 expected (edge case)
+        return self.turn3_expected <= set(self.turn3_ready.keys())
+
+    def is_all_waves_ready(self) -> bool:
+        """Check if ALL waves (Turn 1, 2, 3) are ready for batch emission."""
+        if not self.workflow_complete:
+            return False
+        return (
+            self.is_turn1_complete()
+            and self.is_turn2_complete()
+            and self.is_turn3_complete()
+        )
+
+    def get_ready_dialogues(self) -> list[DialogueSpec]:
+        """Get all dialogues that have their waves ready."""
+        return [d for d in self.dialogues if self.is_dialogue_ready(d)]

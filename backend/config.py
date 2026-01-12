@@ -70,6 +70,7 @@ IMPORTANT: Always output valid JSON. Match the voice to your response's emotiona
     events_ws_path: str = "/v1/events"
     events_turn1_timeout_s: float = 15.0
     events_dialogue_timeout_s: float = 30.0
+    events_workflow_timeout_s: float = 60.0  # Overall timeout for batch emission
 
     # Sentiment analysis configuration
     sentiment_enabled: bool = True
