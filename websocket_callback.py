@@ -397,9 +397,7 @@ def _run_next_dialogue():
         # Check if there's a pending summary to play
         if _STATE["pending_summary"] is not None:
             debug('>>> Playing queued final summary')
-            payload = _STATE["pending_summary"]
-            _STATE["pending_summary"] = None
-            # Small delay before summary starts
+            # Small delay before summary starts (payload read by _play_final_summary_now)
             run("_play_final_summary_now()", delayMilliSeconds=500, fromOP=me)
         return
 
