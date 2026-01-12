@@ -77,6 +77,7 @@ _STATE = {
     "last_seq_by_session": {},      # sessionId -> last seq seen (basic dedupe)
     "pending_summary": None,        # final_summary payload waiting for dialogues to finish
     "turn1_playing": False,         # True while Turn 1 audio is playing
+    "original_summary_volume": None,  # Saved volume before summary (to restore after)
 }
 
 
@@ -587,6 +588,13 @@ def _play_final_summary_now():
         debug('  final_summary.ready has no waves')
         return
 
+    # Double the volume for summary playback
+    if op('audiodevout7'):
+        current_vol = op('audiodevout7').par.volume.eval()
+        _STATE["original_summary_volume"] = current_vol
+        op('audiodevout7').par.volume = current_vol * 2
+        debug(f'  audiodevout7 volume: {current_vol} -> {current_vol * 2}')
+
     max_duration_ms = 0.0
 
     debug(f'  Loading {len(waves)} waves to slots 1A-6A')
@@ -609,9 +617,23 @@ def _play_final_summary_now():
 
     debug(f'>>> FINAL SUMMARY PLAYING: max_duration={max_duration_ms:.0f}ms')
 
-    # Stop after longest audio + buffer
+    # Stop and restore volume after longest audio + buffer
     stop_delay_ms = int(max_duration_ms + 500)
-    run("_stop_all_slots()", delayMilliSeconds=stop_delay_ms, fromOP=me)
+    run("_on_summary_complete()", delayMilliSeconds=stop_delay_ms, fromOP=me)
+
+
+def _on_summary_complete():
+    """Called when summary playback finishes. Stops audio and restores volume."""
+    _stop_all_slots()
+
+    # Restore original volume
+    if op('audiodevout7') and _STATE["original_summary_volume"] is not None:
+        original_vol = _STATE["original_summary_volume"]
+        op('audiodevout7').par.volume = original_vol
+        debug(f'>>> FINAL SUMMARY COMPLETE: audiodevout7 volume restored to {original_vol}')
+        _STATE["original_summary_volume"] = None
+    else:
+        debug('>>> FINAL SUMMARY COMPLETE')
 
 
 def _handle_event_json(event_dict):
