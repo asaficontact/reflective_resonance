@@ -292,7 +292,7 @@ def _dedupe_event(event_dict):
 
 def _handle_turn1(payload):
     """
-    Turn 1: Load each agent's waves to their target physical slots, then play all.
+    Turn 1: Play each agent's waves SEQUENTIALLY from slot 1 to slot 6.
 
     Event payload structure:
     {
@@ -318,13 +318,15 @@ def _handle_turn1(payload):
         debug('turn1.waves.ready payload has no slots')
         return
 
-    max_duration_ms = 0.0
     slot_count = len(slots)
+    debug(f'>>> TURN 1 START: {slot_count} slots (sequential playback)')
 
-    debug(f'>>> TURN 1 START: Loading {slot_count} slots')
+    # Sort slots by slotId to ensure order 1, 2, 3, 4, 5, 6
+    sorted_slots = sorted(slots, key=lambda s: s.get('slotId', 0))
 
-    # Load files for each agent's waves to their target physical slots
-    for s in slots:
+    # Build steps list: (slot_id, wave1_target, wave1_path, wave2_target, wave2_path, duration_ms)
+    steps = []
+    for s in sorted_slots:
         slot_id = s.get('slotId')
         wave1_path = s.get('wave1PathAbs')
         wave1_target = s.get('wave1TargetSlotId')
@@ -332,28 +334,49 @@ def _handle_turn1(payload):
         wave2_target = s.get('wave2TargetSlotId')
         duration_ms = s.get('durationMs', FALLBACK_TURN1_DURATION_MS)
 
-        max_duration_ms = max(max_duration_ms, duration_ms)
-
         debug(f'  Turn1 slot {slot_id}: duration={duration_ms:.0f}ms, wave1->{wave1_target}A, wave2->{wave2_target}B')
 
-        # wave1 -> channel A of its target slot
-        if wave1_path and wave1_target:
-            _load_wave(int(wave1_target), 'A', wave1_path)
-
-        # wave2 -> channel B of its target slot
-        if wave2_path and wave2_target:
-            _load_wave(int(wave2_target), 'B', wave2_path)
+        steps.append((
+            slot_id,
+            int(wave1_target) if wave1_target else None,
+            wave1_path,
+            int(wave2_target) if wave2_target else None,
+            wave2_path,
+            duration_ms
+        ))
 
     # Mark Turn 1 as playing
     _STATE["turn1_playing"] = True
 
-    # Start all at once
-    _play_all_slots()
+    # Start sequential playback
+    _play_turn1_sequentially(steps, 0)
 
-    debug(f'>>> TURN 1 PLAYING: max_duration={max_duration_ms:.0f}ms')
 
-    # Schedule Turn 1 completion - this will start queued dialogues
-    run("_on_turn1_complete()", delayMilliSeconds=int(max_duration_ms + 300), fromOP=me)
+def _play_turn1_sequentially(steps, idx):
+    """
+    Play Turn 1 slots one at a time.
+    Each step: (slot_id, wave1_target, wave1_path, wave2_target, wave2_path, duration_ms)
+    """
+    if idx >= len(steps):
+        # All Turn 1 slots done
+        _on_turn1_complete()
+        return
+
+    slot_id, wave1_target, wave1_path, wave2_target, wave2_path, duration_ms = steps[idx]
+
+    debug(f'>>> TURN 1 SLOT {slot_id} PLAYING ({idx+1}/{len(steps)}): duration={duration_ms:.0f}ms')
+
+    # Load and play wave1 on target slot's A channel
+    if wave1_path and wave1_target:
+        _load_and_play_wave(wave1_target, 'A', wave1_path)
+
+    # Load and play wave2 on target slot's B channel
+    if wave2_path and wave2_target:
+        _load_and_play_wave(wave2_target, 'B', wave2_path)
+
+    # Schedule next slot after this one finishes (+ small buffer)
+    next_delay_ms = int(duration_ms + 200)
+    run(f"_play_turn1_sequentially({repr(steps)}, {idx+1})", delayMilliSeconds=next_delay_ms, fromOP=me)
 
 
 def _on_turn1_complete():
