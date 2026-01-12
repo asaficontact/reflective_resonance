@@ -10,9 +10,9 @@ export type AgentId =
 // Speaker slot identifiers (1-6)
 export type SlotId = 1 | 2 | 3 | 4 | 5 | 6;
 
-// 3-turn workflow types
-export type TurnIndex = 1 | 2 | 3;
-export type MessageKind = 'response' | 'comment' | 'reply';
+// 4-turn workflow types (Turn 4 is summary)
+export type TurnIndex = 1 | 2 | 3 | 4;
+export type MessageKind = 'response' | 'comment' | 'reply' | 'summary';
 
 // Slot status during operation
 export type SlotStatus = 'idle' | 'streaming' | 'done' | 'error';

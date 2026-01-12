@@ -85,6 +85,29 @@ def render_turn3_prompt(
     )
 
 
+def render_turn4_prompt(
+    user_message: str,
+    all_responses: list[dict],
+) -> str:
+    """Render the Turn 4 (summary) prompt.
+
+    Args:
+        user_message: The original user whisper.
+        all_responses: List of all responses with keys:
+            - slot_id: int
+            - turn_label: str (e.g., "Turn 1 reflection", "Turn 2 comment", "Turn 3 reply")
+            - text: str
+
+    Returns:
+        Rendered prompt string for summary LLM call.
+    """
+    return _manager.render(
+        "turn4_summary.j2",
+        user_message=user_message,
+        all_responses=all_responses,
+    )
+
+
 def render_sentiment_prompt(user_message: str) -> str:
     """Render the sentiment analysis prompt.
 

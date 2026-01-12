@@ -18,6 +18,9 @@ def tts_path_to_waves_dir(
     Input:  artifacts/tts/sessions/<session>/turn_<N>/slot-1_gpt-5.1_friendly_casual.wav
     Output: artifacts/waves/sessions/<session>/turn_<N>/
 
+    For summary (turn_index=-1):
+    Output: artifacts/waves/sessions/<session>/summary/
+
     The wave files will be written by decompose_audio_to_waves as:
         <output_dir>/<basename>_v3_wave1.wav
         <output_dir>/<basename>_v3_wave2.wav
@@ -25,11 +28,13 @@ def tts_path_to_waves_dir(
     Args:
         tts_audio_path: Absolute path to the TTS WAV file
         session_id: The session UUID
-        turn_index: Turn number (1, 2, or 3)
+        turn_index: Turn number (1, 2, 3, or -1 for summary)
 
     Returns:
         Path to the output directory for wave files
     """
+    if turn_index == -1:
+        return WAVES_SESSIONS_BASE / session_id / "summary"
     return WAVES_SESSIONS_BASE / session_id / f"turn_{turn_index}"
 
 

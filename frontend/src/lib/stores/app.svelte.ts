@@ -28,14 +28,18 @@ function createAppStore() {
 	let isSending = $state(false);
 	let isOnline = $state(browser ? navigator.onLine : true);
 
-	// 3-turn workflow state
+	// 4-turn workflow state (Turn 4 is summary)
 	let currentSessionId = $state<string | null>(null);
 	let currentTurnIndex = $state<TurnIndex | null>(null);
 	let turnStatus = $state<Record<TurnIndex, TurnStatus>>({
 		1: 'pending',
 		2: 'pending',
-		3: 'pending'
+		3: 'pending',
+		4: 'pending'
 	});
+
+	// Summary state (Turn 4 - not per-slot, single summary for entire session)
+	let summaryMessage = $state<Message | null>(null);
 
 	// Track slots that are currently speaking (active in any turn)
 	let speakingSlotIds = $state<Set<SlotId>>(new Set());
@@ -223,9 +227,11 @@ function createAppStore() {
 		turnStatus = {
 			1: 'pending',
 			2: 'pending',
-			3: 'pending'
+			3: 'pending',
+			4: 'pending'
 		};
 		currentTurnIndex = null;
+		summaryMessage = null;
 	}
 
 	function getTurnsForSlot(slotId: SlotId): SlotTurnData {
@@ -291,6 +297,16 @@ function createAppStore() {
 		);
 	}
 
+	// === Turn 4 Summary Methods ===
+
+	function setSummaryMessage(message: Message | null): void {
+		summaryMessage = message;
+	}
+
+	function getSummaryMessage(): Message | null {
+		return summaryMessage;
+	}
+
 	// === Persistence ===
 	function persistState(): void {
 		if (!browser) return;
@@ -352,7 +368,7 @@ function createAppStore() {
 			return isOnline;
 		},
 
-		// 3-turn workflow state (getters)
+		// 4-turn workflow state (getters)
 		get currentSessionId() {
 			return currentSessionId;
 		},
@@ -361,6 +377,9 @@ function createAppStore() {
 		},
 		get turnStatus() {
 			return turnStatus;
+		},
+		get summaryMessage() {
+			return summaryMessage;
 		},
 
 		// Derived state (getters)
@@ -408,14 +427,18 @@ function createAppStore() {
 		loadPersistedState,
 		clearPersistedState,
 
-		// 3-turn workflow actions
+		// 4-turn workflow actions
 		setCurrentSession,
 		setTurnStatus,
 		resetTurnStatus,
 		getTurnsForSlot,
 		getReceivedComments,
 		updateMessageAudioStatus,
-		findMessageByTurn
+		findMessageByTurn,
+
+		// Turn 4 summary actions
+		setSummaryMessage,
+		getSummaryMessage
 	};
 }
 

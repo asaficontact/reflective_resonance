@@ -44,6 +44,31 @@ class DialogueSpec:
 
 
 @dataclass
+class SummaryMeta:
+    """Metadata for summary TTS output."""
+
+    voice_profile: str
+    tts_basename: str
+    text: str
+
+    def derive_wave_paths(self, session_id: str) -> tuple[str, str, str, str]:
+        """Derive wave paths for summary (uses special 'summary' directory).
+
+        Returns:
+            Tuple of (wave1_abs, wave1_rel, wave2_abs, wave2_rel)
+        """
+        base_rel = f"waves/sessions/{session_id}/summary/{self.tts_basename}_v3"
+
+        wave1_rel = f"{base_rel}_wave1.wav"
+        wave2_rel = f"{base_rel}_wave2.wav"
+
+        wave1_abs = str((Path("artifacts") / wave1_rel).resolve())
+        wave2_abs = str((Path("artifacts") / wave2_rel).resolve())
+
+        return (wave1_abs, wave1_rel, wave2_abs, wave2_rel)
+
+
+@dataclass
 class SessionEventsState:
     """
     Per-session state for tracking wave-mix readiness and event emission.
@@ -84,6 +109,12 @@ class SessionEventsState:
     # Workflow completion tracking for batch emission
     workflow_complete: bool = False  # True after turn3_complete() called
     batch_emitted: bool = False  # True after batch emission (prevents duplicates)
+
+    # Summary (Turn 4) tracking
+    summary_expected: bool = False  # True after workflow requests summary
+    summary_ready: bool = False  # True after summary wave decomposition completes
+    summary_emitted: bool = False  # True after final_summary.ready emitted
+    summary_meta: SummaryMeta | None = None  # Metadata for summary wave paths
 
     # Sequence counter for events
     seq_counter: int = 0

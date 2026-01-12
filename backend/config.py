@@ -76,6 +76,13 @@ Choose based on the emotional quality you sense:
     sentiment_timeout_s: float = 10.0
     sentiment_max_tokens: int = 100
 
+    # Summary (Turn 4) configuration
+    summary_enabled: bool = True
+    summary_model: str = "openai/gpt-4o"
+    summary_temperature: float = 0.5
+    summary_timeout_s: float = 15.0
+    summary_max_tokens: int = 300
+
     # ElevenLabs TTS configuration
     elevenlabs_api_key: str = ""
     elevenlabs_default_model: str = "eleven_flash_v2_5"

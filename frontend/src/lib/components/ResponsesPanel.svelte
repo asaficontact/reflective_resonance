@@ -13,6 +13,11 @@
 
 	// Check if a turn has any data
 	function turnHasData(turnIndex: TurnIndex): boolean {
+		// Turn 4 (summary) is special - check dedicated summary state
+		if (turnIndex === 4) {
+			return appStore.summaryMessage !== null;
+		}
+
 		return appStore.assignedSlots.some((slot) => {
 			const turns = appStore.getTurnsForSlot(slot.id);
 			if (turnIndex === 1) return !!turns.turn1;
@@ -48,11 +53,17 @@
 			.filter((item) => item.message || item.isStreaming);
 	});
 
-	const hasResponses = $derived(responsesForSelectedTurn.length > 0);
+	// For Turn 4 (summary), check summary message; for others, check slot responses
+	const hasResponses = $derived(
+		selectedTurn === 4
+			? appStore.summaryMessage !== null
+			: responsesForSelectedTurn.length > 0
+	);
 
 	// Auto-advance to latest turn with data
 	$effect(() => {
-		if (turnHasData(3)) selectedTurn = 3;
+		if (turnHasData(4)) selectedTurn = 4;
+		else if (turnHasData(3)) selectedTurn = 3;
 		else if (turnHasData(2)) selectedTurn = 2;
 		else if (turnHasData(1)) selectedTurn = 1;
 	});
@@ -61,7 +72,8 @@
 	const turnLabels: Record<TurnIndex, string> = {
 		1: 'Response',
 		2: 'Comment',
-		3: 'Reply'
+		3: 'Reply',
+		4: 'Summary'
 	};
 </script>
 
@@ -72,7 +84,7 @@
 
 	<!-- Turn Tabs -->
 	<div class="turn-tabs">
-		{#each [1, 2, 3] as turn (turn)}
+		{#each [1, 2, 3, 4] as turn (turn)}
 			{@const hasData = turnHasData(turn as TurnIndex)}
 			{@const isActive = turnStatusMap[turn as TurnIndex] === 'in_progress'}
 			{@const isDone = turnStatusMap[turn as TurnIndex] === 'done'}
@@ -96,17 +108,38 @@
 	</div>
 
 	{#if hasResponses}
-		<div class="responses-list">
-			{#each responsesForSelectedTurn as { slot, message, isStreaming, receivedComments } (slot.id)}
-				<ResponseCard
-					{slot}
-					{message}
-					{isStreaming}
-					turnIndex={selectedTurn}
-					{receivedComments}
-				/>
-			{/each}
-		</div>
+		{#if selectedTurn === 4}
+			<!-- Turn 4: Summary (single message, not per-slot) -->
+			{@const summary = appStore.summaryMessage}
+			{#if summary}
+				<div class="summary-display">
+					<div class="summary-card">
+						<div class="summary-header">
+							<span class="summary-label">Session Summary</span>
+							{#if summary.voiceProfile}
+								<span class="summary-voice">{summary.voiceProfile}</span>
+							{/if}
+						</div>
+						<p class="summary-text">{summary.content}</p>
+						{#if summary.audioReady}
+							<div class="summary-audio-badge">Audio Ready</div>
+						{/if}
+					</div>
+				</div>
+			{/if}
+		{:else}
+			<div class="responses-list">
+				{#each responsesForSelectedTurn as { slot, message, isStreaming, receivedComments } (slot.id)}
+					<ResponseCard
+						{slot}
+						{message}
+						{isStreaming}
+						turnIndex={selectedTurn}
+						{receivedComments}
+					/>
+				{/each}
+			</div>
+		{/if}
 	{:else}
 		<div class="empty-state">
 			<MessageSquare size={32} strokeWidth={1.5} />
@@ -259,6 +292,64 @@
 	.empty-state p {
 		font-size: 0.875rem;
 		max-width: 200px;
+	}
+
+	/* Summary Display (Turn 4) */
+	.summary-display {
+		flex: 1;
+		padding: 0.5rem 0;
+		overflow-y: auto;
+	}
+
+	.summary-card {
+		background: linear-gradient(135deg, rgba(147, 51, 234, 0.15) 0%, rgba(79, 70, 229, 0.15) 100%);
+		border: 1px solid rgba(147, 51, 234, 0.3);
+		border-radius: 0.75rem;
+		padding: 1rem;
+	}
+
+	.summary-header {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		margin-bottom: 0.75rem;
+	}
+
+	.summary-label {
+		font-size: 0.75rem;
+		font-weight: 600;
+		color: rgb(192, 132, 252);
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+	}
+
+	.summary-voice {
+		font-size: 0.625rem;
+		color: var(--rr-text-muted);
+		background: rgba(255, 255, 255, 0.05);
+		padding: 0.125rem 0.5rem;
+		border-radius: 0.25rem;
+	}
+
+	.summary-text {
+		font-size: 0.875rem;
+		line-height: 1.6;
+		color: var(--rr-text);
+		margin: 0;
+	}
+
+	.summary-audio-badge {
+		margin-top: 0.75rem;
+		font-size: 0.625rem;
+		color: rgb(134, 239, 172);
+		display: flex;
+		align-items: center;
+		gap: 0.25rem;
+	}
+
+	.summary-audio-badge::before {
+		content: '●';
+		font-size: 0.5rem;
 	}
 
 	/* Responsive */

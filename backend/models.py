@@ -20,9 +20,9 @@ AgentId = Literal[
 SlotId = Literal[1, 2, 3, 4, 5, 6]
 ErrorType = Literal["network", "timeout", "rate_limit", "server_error", "tts_error", "unknown"]
 
-# 3-turn workflow types
-TurnIndex = Literal[1, 2, 3]
-MessageKind = Literal["response", "comment", "reply"]
+# 4-turn workflow types (Turn 4 is summary)
+TurnIndex = Literal[1, 2, 3, 4]
+MessageKind = Literal["response", "comment", "reply", "summary"]
 
 
 # =============================================================================
@@ -252,8 +252,18 @@ class ReceivedComment:
 
 
 @dataclass
+class SummaryResult:
+    """Result of Turn 4 summary generation."""
+
+    text: str
+    voice_profile: str
+    success: bool
+    audio_path: str | None = None
+
+
+@dataclass
 class WorkflowState:
-    """Tracks state across all three turns."""
+    """Tracks state across all turns (1-4)."""
 
     session: "TTSSession"  # Forward reference, actual type from sessions.py
     slots: list[SlotRequest]
@@ -262,6 +272,7 @@ class WorkflowState:
     turn2_results: dict[int, Turn2Result] = field(default_factory=dict)
     turn3_results: dict[int, Turn3Result] = field(default_factory=dict)
     comments_by_target: dict[int, list[ReceivedComment]] = field(default_factory=dict)
+    summary_result: SummaryResult | None = None
 
 
 # Type hint for forward reference

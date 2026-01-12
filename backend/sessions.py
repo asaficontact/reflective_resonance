@@ -135,6 +135,25 @@ class TTSSession:
         return f"tts/sessions/{self.session_id}/turn_3/{filename}"
 
     # =========================================================================
+    # Summary (Turn 4): Summary audio paths
+    # =========================================================================
+
+    def get_summary_audio_path(self, voice_profile: str) -> Path:
+        """Get absolute path for summary WAV file.
+
+        Format: summary/summary_<voiceProfile>.wav
+        """
+        summary_dir = self.output_dir / "summary"
+        summary_dir.mkdir(exist_ok=True)
+        filename = f"summary_{voice_profile}.wav"
+        return summary_dir / filename
+
+    def get_summary_relative_path(self, voice_profile: str) -> str:
+        """Get relative path for summary audio (for events)."""
+        filename = f"summary_{voice_profile}.wav"
+        return f"tts/sessions/{self.session_id}/summary/{filename}"
+
+    # =========================================================================
     # Manifest management
     # =========================================================================
 
@@ -195,6 +214,20 @@ class TTSSession:
             "kind": "reply",
             "receivedComments": received_comments,
         })
+
+    def add_summary_entry(
+        self,
+        voice_profile: str,
+        text: str,
+        audio_path: str,
+    ) -> None:
+        """Add summary (Turn 4) entry to the manifest."""
+        self._manifest["summary"] = {
+            "voiceProfile": voice_profile,
+            "text": text,
+            "audioPath": audio_path,
+            "kind": "summary",
+        }
 
     def write_manifest(self) -> Path:
         """Write session.json manifest to disk."""

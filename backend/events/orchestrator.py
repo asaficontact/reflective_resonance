@@ -17,12 +17,14 @@ from starlette.websockets import WebSocket, WebSocketState
 from backend.events.models import (
     DialogueWavesPayload,
     EventEnvelope,
+    FinalSummaryWavesPayload,
     PlayOrderItem,
     SlotWaveInfo,
+    SummaryWaveInfo,
     Turn1WavesPayload,
     UserSentimentPayload,
 )
-from backend.events.state import DialogueSpec, SessionEventsState, SlotMeta
+from backend.events.state import DialogueSpec, SessionEventsState, SlotMeta, SummaryMeta
 
 if TYPE_CHECKING:
     from backend.waves.worker import WavesJobResult
@@ -301,10 +303,44 @@ class EventsOrchestrator:
         turn_index = job.turn_index
 
         state = self._sessions.get(session_id)
-        if not state or state.batch_emitted:
-            # Unknown session or already emitted
-            if not state:
-                logger.debug(f"Result for unknown session {session_id}, ignoring")
+        if not state:
+            logger.debug(f"Result for unknown session {session_id}, ignoring")
+            return
+
+        # Handle summary result first (turn_index=-1) - independent of batch emission
+        # Summary runs AFTER batch is emitted, so we must check this before batch_emitted
+        if turn_index == -1:
+            if not decompose_result.success:
+                logger.warning(
+                    f"Summary wave decomposition failed: session={session_id}, "
+                    f"error={decompose_result.error}"
+                )
+                return
+
+            voice_profile = job.voice_profile
+            tts_basename = job.tts_basename or job.input_path.stem
+            summary_text = job.summary_text or ""
+
+            state.summary_ready = True
+            state.summary_meta = SummaryMeta(
+                voice_profile=voice_profile,
+                tts_basename=tts_basename,
+                text=summary_text,
+            )
+            logger.debug(f"Summary waves ready for session {session_id}")
+
+            # Emit final_summary.ready event
+            await self.emit_final_summary_ready(
+                session_id=session_id,
+                text=summary_text,
+                voice_profile=voice_profile,
+                tts_basename=tts_basename,
+                success=decompose_result.success,
+            )
+            return
+
+        # For Turn 1/2/3, check if batch already emitted
+        if state.batch_emitted:
             return
 
         if not decompose_result.success:
@@ -603,6 +639,67 @@ class EventsOrchestrator:
 
         await self._send_event(event)
         logger.info(f"Emitted user_sentiment: {session_id}, sentiment={sentiment}")
+
+    async def emit_final_summary_ready(
+        self,
+        session_id: str,
+        text: str,
+        voice_profile: str,
+        tts_basename: str,
+        success: bool,
+    ) -> None:
+        """Emit final_summary.ready event.
+
+        Called after summary wave decomposition completes.
+
+        Args:
+            session_id: The workflow session UUID
+            text: The summary text
+            voice_profile: Voice profile used for TTS
+            tts_basename: Base filename for wave file path derivation
+            success: Whether summary generation succeeded
+        """
+        state = self._sessions.get(session_id)
+        if not state or state.summary_emitted:
+            return
+
+        state.summary_emitted = True
+
+        if success:
+            meta = SummaryMeta(
+                voice_profile=voice_profile,
+                tts_basename=tts_basename,
+                text=text,
+            )
+            wave1_abs, wave1_rel, wave2_abs, wave2_rel = meta.derive_wave_paths(session_id)
+
+            payload = FinalSummaryWavesPayload(
+                status="complete",
+                text=text,
+                waveInfo=SummaryWaveInfo(
+                    voiceProfile=voice_profile,
+                    wave1PathAbs=wave1_abs,
+                    wave1PathRel=wave1_rel,
+                    wave2PathAbs=wave2_abs,
+                    wave2PathRel=wave2_rel,
+                ),
+            )
+        else:
+            payload = FinalSummaryWavesPayload(
+                status="failed",
+                text=text,
+                waveInfo=None,
+            )
+
+        event = EventEnvelope.create(
+            event_type="final_summary.ready",
+            session_id=session_id,
+            seq=state.next_seq(),
+            payload=payload,
+        )
+
+        await self._send_event(event)
+        logger.info(f"Emitted final_summary.ready: session={session_id}, status={payload.status}")
 
     # -------------------------------------------------------------------------
     # Internal: Timeout handlers

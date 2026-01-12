@@ -30,6 +30,7 @@ class DecomposeJob:
     input_path: Path
     output_dir: Path
     target_slot_id: int | None = None
+    summary_text: str | None = None  # For turn_index=-1 (summary) only
     submitted_at: float = field(default_factory=time.time)
 
 

@@ -122,6 +122,23 @@
 				appStore.setSlotSpeaking(data.slotId, true);
 			},
 			onSlotDone: (data: SlotDoneData) => {
+				// Handle Turn 4 summary separately (slotId=0, not a real slot)
+				if (data.turnIndex === 4 && data.kind === 'summary') {
+					// Store summary in dedicated state
+					const summaryMessage = appStore.addMessage({
+						role: 'agent',
+						content: data.text,
+						agentId: data.agentId,
+						isStreaming: false,
+						sessionId: data.sessionId,
+						turnIndex: 4,
+						kind: 'summary',
+						voiceProfile: data.voiceProfile
+					});
+					appStore.setSummaryMessage(summaryMessage);
+					return;
+				}
+
 				// Clear speaking state for this slot
 				appStore.setSlotSpeaking(data.slotId, false);
 				const key = getMessageKey(data.slotId, data.turnIndex, data.kind);
@@ -163,6 +180,15 @@
 				}
 			},
 			onSlotAudio: (data: SlotAudioData) => {
+				// Handle Turn 4 summary audio
+				if (data.turnIndex === 4 && data.kind === 'summary') {
+					const summaryMsg = appStore.getSummaryMessage();
+					if (summaryMsg) {
+						appStore.updateMessageAudioStatus(summaryMsg.id, data.audioPath);
+					}
+					return;
+				}
+
 				const key = getMessageKey(data.slotId, data.turnIndex, data.kind);
 				const messageId = messageIds.get(key);
 				if (messageId) {

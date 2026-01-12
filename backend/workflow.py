@@ -29,6 +29,7 @@ from backend.models import (
     SlotErrorEvent,
     SlotRequest,
     SlotStartEvent,
+    SummaryResult,
     Turn1Result,
     Turn2Result,
     Turn3Result,
@@ -37,7 +38,12 @@ from backend.models import (
     WorkflowState,
     SpokenResponse,
 )
-from backend.prompts import render_turn1_prompt, render_turn2_prompt, render_turn3_prompt
+from backend.prompts import (
+    render_turn1_prompt,
+    render_turn2_prompt,
+    render_turn3_prompt,
+    render_turn4_prompt,
+)
 from backend.sentiment import analyze_sentiment, SentimentResult
 from backend.sessions import TTSSession
 from backend.tts import MultiVoiceAgentTTS
@@ -80,6 +86,7 @@ def _submit_decomposition_job(
     agent_id: str,
     voice_profile: str,
     target_slot_id: int | None = None,
+    summary_text: str | None = None,
 ) -> None:
     """Submit a decomposition job (non-blocking, best-effort).
 
@@ -89,7 +96,8 @@ def _submit_decomposition_job(
     Args:
         audio_path: Absolute path to the TTS WAV file
         session_id: The workflow session ID
-        turn_index: Turn number (1, 2, or 3)
+        turn_index: Turn number (1, 2, 3, or -1 for summary)
+        summary_text: For turn_index=-1, the summary text to include in the event
     """
     if not settings.waves_enabled:
         return
@@ -109,6 +117,7 @@ def _submit_decomposition_job(
             input_path=Path(audio_path) if not isinstance(audio_path, Path) else audio_path,
             output_dir=output_dir,
             target_slot_id=target_slot_id,
+            summary_text=summary_text,
         )
 
         pool = get_worker_pool()
@@ -1130,6 +1139,225 @@ async def execute_turn3(
 
 
 # =============================================================================
+# Turn 4: Summary
+# =============================================================================
+
+
+def _collect_all_responses(state: WorkflowState) -> list[dict]:
+    """Collect all responses from turns 1-3 for summary prompt.
+
+    Args:
+        state: Workflow state with turn results
+
+    Returns:
+        List of response dicts with slot_id, turn_label, and text
+    """
+    responses = []
+
+    # Turn 1 responses
+    for slot_id, result in sorted(state.turn1_results.items()):
+        if result.success:
+            responses.append({
+                "slot_id": result.slot_id,
+                "turn_label": "Turn 1 reflection",
+                "text": result.text,
+            })
+
+    # Turn 2 comments
+    for slot_id, result in sorted(state.turn2_results.items()):
+        if result.success:
+            responses.append({
+                "slot_id": result.slot_id,
+                "turn_label": "Turn 2 comment",
+                "text": result.comment,
+            })
+
+    # Turn 3 replies
+    for slot_id, result in sorted(state.turn3_results.items()):
+        if result.success:
+            responses.append({
+                "slot_id": result.slot_id,
+                "turn_label": "Turn 3 reply",
+                "text": result.text,
+            })
+
+    return responses
+
+
+async def execute_summary(
+    state: WorkflowState,
+    queue: asyncio.Queue[ServerSentEvent],
+) -> SummaryResult:
+    """Execute Turn 4: Generate summary of all responses.
+
+    Uses gpt-4o with fresh conversation (no history).
+
+    Args:
+        state: Workflow state with turn results
+        queue: SSE event queue for frontend updates
+
+    Returns:
+        SummaryResult with success status and response data
+    """
+    session = state.session
+    session_id = session.session_id
+
+    # Emit turn.start for Turn 4
+    await queue.put(
+        ServerSentEvent(
+            event="turn.start",
+            data=TurnStartEvent(sessionId=session_id, turnIndex=4).model_dump_json(),
+        )
+    )
+
+    try:
+        # Collect all responses for context
+        all_responses = _collect_all_responses(state)
+
+        if not all_responses:
+            logger.warning("No responses to summarize")
+            return SummaryResult(text="", voice_profile="", success=False)
+
+        # Emit slot.start for summary (slotId=0 for summary)
+        await queue.put(
+            ServerSentEvent(
+                event="slot.start",
+                data=SlotStartEvent(
+                    sessionId=session_id,
+                    turnIndex=4,
+                    kind="summary",
+                    slotId=0,
+                    agentId="gpt-4o",
+                ).model_dump_json(),
+            )
+        )
+
+        # Get LLM (gpt-4o, fresh conversation)
+        llm = get_llm("gpt-4o")
+        model = settings.summary_model
+
+        # Render prompt
+        prompt = render_turn4_prompt(state.user_message, all_responses)
+
+        # Fresh conversation - just system prompt + user prompt
+        messages = [
+            {"role": "system", "content": settings.default_system_prompt},
+            {"role": "user", "content": prompt},
+        ]
+
+        # Get structured response
+        response: SpokenResponse = await llm.complete_structured(
+            messages=messages,
+            model=model,
+            response_model=SpokenResponse,
+            temperature=settings.summary_temperature,
+        )
+
+        logger.info(
+            f"Summary LLM done: voice={response.voice_profile}, "
+            f"text={len(response.text)} chars"
+        )
+
+        # Emit slot.done for summary
+        await queue.put(
+            ServerSentEvent(
+                event="slot.done",
+                data=SlotDoneEvent(
+                    sessionId=session_id,
+                    turnIndex=4,
+                    kind="summary",
+                    slotId=0,
+                    agentId="gpt-4o",
+                    text=response.text,
+                    voiceProfile=response.voice_profile,
+                ).model_dump_json(),
+            )
+        )
+
+        # Generate TTS
+        audio_path = None
+        relative_path = None
+        try:
+            tts = get_tts()
+            audio_path = session.get_summary_audio_path(response.voice_profile)
+            relative_path = session.get_summary_relative_path(response.voice_profile)
+
+            await asyncio.to_thread(
+                tts.generate_wav_to_file,
+                response.text,
+                response.voice_profile,
+                audio_path,
+            )
+
+            logger.info(f"Summary TTS done: {audio_path.name}")
+
+            # Emit slot.audio for summary
+            await queue.put(
+                ServerSentEvent(
+                    event="slot.audio",
+                    data=SlotAudioEvent(
+                        sessionId=session_id,
+                        turnIndex=4,
+                        kind="summary",
+                        slotId=0,
+                        agentId="gpt-4o",
+                        voiceProfile=response.voice_profile,
+                        audioPath=relative_path,
+                    ).model_dump_json(),
+                )
+            )
+
+            # Submit decomposition job (slot_id=-1 for summary)
+            _submit_decomposition_job(
+                audio_path,
+                session_id,
+                turn_index=-1,  # Special index for summary
+                slot_id=-1,
+                agent_id="gpt-4o",
+                voice_profile=response.voice_profile,
+                summary_text=response.text,  # Pass text for event emission
+            )
+
+            # Add to manifest
+            session.add_summary_entry(
+                voice_profile=response.voice_profile,
+                text=response.text,
+                audio_path=relative_path,
+            )
+
+        except Exception as tts_error:
+            logger.error(f"Summary TTS error: {tts_error}")
+            return SummaryResult(
+                text=response.text,
+                voice_profile=response.voice_profile,
+                success=False,
+            )
+
+        # Emit turn.done for Turn 4
+        await queue.put(
+            ServerSentEvent(
+                event="turn.done",
+                data=TurnDoneEvent(
+                    sessionId=session_id,
+                    turnIndex=4,
+                    slotCount=1,  # Summary is always 1 "slot"
+                ).model_dump_json(),
+            )
+        )
+
+        return SummaryResult(
+            text=response.text,
+            voice_profile=response.voice_profile,
+            success=True,
+            audio_path=str(relative_path),
+        )
+
+    except Exception as e:
+        logger.error(f"Summary generation error: {e}")
+        return SummaryResult(text="", voice_profile="", success=False)
+
+
+# =============================================================================
 # Main Workflow
 # =============================================================================
 
@@ -1188,6 +1416,13 @@ async def run_three_turn_workflow(
             # Turn 3: Slots with comments reply
             await execute_turn3(state, queue)
 
+            # Turn 4: Summary (runs after Turn 3)
+            if settings.summary_enabled:
+                state.summary_result = await execute_summary(state, queue)
+                logger.info(
+                    f"Summary complete: success={state.summary_result.success}"
+                )
+
             # Write manifest
             manifest_path = session.write_manifest()
             logger.info(f"Manifest written: {manifest_path}")
@@ -1226,16 +1461,17 @@ async def run_three_turn_workflow(
                 completed_slots += 1
 
     # Emit final done event
+    turn_count = 4 if settings.summary_enabled else 3
     yield ServerSentEvent(
         event="done",
         data=DoneEvent(
             sessionId=session.session_id,
             completedSlots=completed_slots,
-            turns=3,
+            turns=turn_count,
         ).model_dump_json(),
     )
 
     logger.info(
         f"Workflow complete: {completed_slots}/{len(slots)} slots, "
-        f"session={session.session_id}"
+        f"turns={turn_count}, session={session.session_id}"
     )

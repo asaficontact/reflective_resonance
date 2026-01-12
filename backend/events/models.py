@@ -107,3 +107,25 @@ class UserSentimentPayload(BaseModel):
     justification: str = Field(
         description="Brief explanation of sentiment determination"
     )
+
+
+class SummaryWaveInfo(BaseModel):
+    """Wave file info for summary."""
+
+    voiceProfile: str = Field(description="Voice profile used for TTS")
+    wave1PathAbs: str = Field(description="Absolute path to wave1 file")
+    wave1PathRel: str = Field(description="Relative path to wave1 under artifacts/")
+    wave2PathAbs: str = Field(description="Absolute path to wave2 file")
+    wave2PathRel: str = Field(description="Relative path to wave2 under artifacts/")
+
+
+class FinalSummaryWavesPayload(BaseModel):
+    """Payload for final_summary.ready event."""
+
+    status: Literal["complete", "failed"] = Field(
+        description="complete if summary ready, failed if generation failed"
+    )
+    text: str = Field(description="The summary text")
+    waveInfo: SummaryWaveInfo | None = Field(
+        default=None, description="Wave file paths (None if failed)"
+    )
