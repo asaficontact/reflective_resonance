@@ -12,6 +12,7 @@ class SlotMeta:
     agent_id: str
     voice_profile: str
     tts_basename: str  # Base filename for deriving wave-mix path
+    audio_duration_ms: float = 0.0  # Audio duration in milliseconds
 
     def derive_wave_paths(
         self, session_id: str, turn_index: int
@@ -51,6 +52,7 @@ class SummaryMeta:
     tts_basename: str
     text: str
     n_waves: int = 6  # Number of waves for summary (6 for 6 slots)
+    audio_duration_ms: float = 0.0  # Audio duration in milliseconds
 
     def derive_wave_paths(self, session_id: str) -> list[tuple[int, str, str]]:
         """Derive wave paths for summary (6 waves mapped to slots 1-6).

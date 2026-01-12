@@ -2,6 +2,7 @@
 # - Handles backend events:
 #   - turn1.waves.ready
 #   - dialogue.waves.ready
+#   - final_summary.ready
 #
 # Docs reference: https://docs.derivative.ca/WebSocket_DAT
 #
@@ -47,11 +48,11 @@ SLOT_AUDIO_OPS = {
     (6, 'B'): op('slot6B_audio'),
 }
 
-# How long to let each segment play (seconds).
-# Tune these to your installation timing.
-TURN1_PLAY_DURATION_S = 8.0
-COMMENT_PLAY_DURATION_S = 3.5
-RESPONDENT_PLAY_DURATION_S = 5.0
+# Duration is now provided by backend in event payloads (durationMs field).
+# These fallback values are only used if durationMs is missing.
+FALLBACK_TURN1_DURATION_MS = 8000.0
+FALLBACK_COMMENT_DURATION_MS = 3500.0
+FALLBACK_RESPONDENT_DURATION_MS = 5000.0
 INTER_DIALOGUE_GAP_S = 1.0
 
 # If True, stop the slot audio before playing a new clip on that slot
@@ -299,7 +300,8 @@ def _handle_turn1(payload):
                 "wave1PathAbs": "/path/...",    # Fundamental frequency
                 "wave1TargetSlotId": 1,         # Physical slot for wave1
                 "wave2PathAbs": "/path/...",    # 1st harmonic
-                "wave2TargetSlotId": 2          # Physical slot for wave2
+                "wave2TargetSlotId": 2,         # Physical slot for wave2
+                "durationMs": 8500.0            # Actual audio duration in ms
             },
             ...
         ]
@@ -314,12 +316,17 @@ def _handle_turn1(payload):
         debug('turn1.waves.ready payload has no slots')
         return
 
+    max_duration_ms = 0.0
+
     # Load files for each agent's waves to their target physical slots
     for s in slots:
         wave1_path = s.get('wave1PathAbs')
         wave1_target = s.get('wave1TargetSlotId')
         wave2_path = s.get('wave2PathAbs')
         wave2_target = s.get('wave2TargetSlotId')
+        duration_ms = s.get('durationMs', FALLBACK_TURN1_DURATION_MS)
+
+        max_duration_ms = max(max_duration_ms, duration_ms)
 
         # wave1 -> channel A of its target slot
         if wave1_path and wave1_target:
@@ -332,8 +339,9 @@ def _handle_turn1(payload):
     # Start all at once
     _play_all_slots()
 
-    # Optional: stop after duration (you can remove if you want loops)
-    run("_stop_all_slots()", delayMilliSeconds=TURN1_PLAY_DURATION_S * 1000, fromOP=me)
+    # Stop after longest audio + buffer (prevents premature cutoff)
+    stop_delay_ms = int(max_duration_ms + 500)
+    run("_stop_all_slots()", delayMilliSeconds=stop_delay_ms, fromOP=me)
 
 
 def _enqueue_dialogue(payload):
@@ -370,15 +378,16 @@ def _run_next_dialogue():
         return
 
     # Build playback steps: commenters then respondent
-    # Each step: (role, wave1_target, wave1_path, wave2_target, wave2_path, duration)
+    # Each step: (role, wave1_target, wave1_path, wave2_target, wave2_path, duration_s)
     steps = []
 
-    # Commenters: one by one
+    # Commenters: one by one (use durationMs from payload, convert to seconds)
     for c in commenters:
         wave1_path = c.get('wave1PathAbs')
         wave1_target = c.get('wave1TargetSlotId')
         wave2_path = c.get('wave2PathAbs')
         wave2_target = c.get('wave2TargetSlotId')
+        duration_ms = c.get('durationMs', FALLBACK_COMMENT_DURATION_MS)
         if not wave1_path:
             continue
         steps.append((
@@ -387,21 +396,22 @@ def _run_next_dialogue():
             wave1_path,
             int(wave2_target) if wave2_target else None,
             wave2_path,
-            COMMENT_PLAY_DURATION_S
+            (duration_ms + 200) / 1000.0  # Convert to seconds with small buffer
         ))
 
-    # Respondent
+    # Respondent (use durationMs from payload, convert to seconds)
     resp_wave1_path = respondent.get('wave1PathAbs')
     resp_wave1_target = respondent.get('wave1TargetSlotId')
     resp_wave2_path = respondent.get('wave2PathAbs')
     resp_wave2_target = respondent.get('wave2TargetSlotId')
+    resp_duration_ms = respondent.get('durationMs', FALLBACK_RESPONDENT_DURATION_MS)
     steps.append((
         "respondent",
         int(resp_wave1_target) if resp_wave1_target else None,
         resp_wave1_path,
         int(resp_wave2_target) if resp_wave2_target else None,
         resp_wave2_path,
-        RESPONDENT_PLAY_DURATION_S
+        (resp_duration_ms + 200) / 1000.0  # Convert to seconds with small buffer
     ))
 
     # Schedule the sequence
@@ -444,6 +454,62 @@ def _handle_dialogue(payload):
     _ensure_dialogue_runner()
 
 
+def _handle_final_summary(payload):
+    """
+    Final Summary (Turn 4): Load 6 waves to slots 1A-6A and play all.
+
+    Event payload structure:
+    {
+        "status": "complete" | "failed",
+        "text": "Summary text...",
+        "waveInfo": {
+            "voiceProfile": "voice_name",
+            "waves": [
+                {"slotId": 1, "wavePathAbs": "/path/...", "wavePathRel": "...", "durationMs": 2500.0},
+                {"slotId": 2, "wavePathAbs": "/path/...", "wavePathRel": "...", "durationMs": 2500.0},
+                ...
+            ]
+        }
+    }
+
+    Summary waves play on the A channel only (no B channel usage).
+    """
+    status = payload.get('status')
+    if status != 'complete':
+        debug('final_summary.ready status is not complete:', status)
+        return
+
+    wave_info = payload.get('waveInfo')
+    if not wave_info:
+        debug('final_summary.ready missing waveInfo')
+        return
+
+    waves = wave_info.get('waves', [])
+    if not waves:
+        debug('final_summary.ready has no waves')
+        return
+
+    max_duration_ms = 0.0
+
+    # Load each wave to its target slot's A channel
+    for w in waves:
+        slot_id = w.get('slotId')
+        wave_path = w.get('wavePathAbs')
+        duration_ms = w.get('durationMs', 3000.0)
+
+        max_duration_ms = max(max_duration_ms, duration_ms)
+
+        if slot_id and wave_path:
+            _load_wave(int(slot_id), 'A', wave_path)
+
+    # Start all at once
+    _play_all_slots()
+
+    # Stop after longest audio + buffer
+    stop_delay_ms = int(max_duration_ms + 500)
+    run("_stop_all_slots()", delayMilliSeconds=stop_delay_ms, fromOP=me)
+
+
 def _handle_event_json(event_dict):
     if not _dedupe_event(event_dict):
         return
@@ -461,6 +527,10 @@ def _handle_event_json(event_dict):
 
     if evt_type == 'dialogue.waves.ready':
         _handle_dialogue(payload)
+        return
+
+    if evt_type == 'final_summary.ready':
+        _handle_final_summary(payload)
         return
 
     # Ignore unknown events

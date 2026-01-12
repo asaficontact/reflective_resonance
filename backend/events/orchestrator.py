@@ -328,6 +328,7 @@ class EventsOrchestrator:
                 tts_basename=tts_basename,
                 text=summary_text,
                 n_waves=job.n_waves,  # Pass n_waves from job (6 for summary)
+                audio_duration_ms=decompose_result.audio_duration_ms,
             )
             logger.debug(f"Summary waves ready for session {session_id}, n_waves={job.n_waves}")
 
@@ -365,6 +366,7 @@ class EventsOrchestrator:
             agent_id=agent_id,
             voice_profile=voice_profile,
             tts_basename=tts_basename,
+            audio_duration_ms=decompose_result.audio_duration_ms,
         )
 
         # Update state based on turn
@@ -443,6 +445,7 @@ class EventsOrchestrator:
                     wave2PathAbs=wave2_abs,
                     wave2PathRel=wave2_rel,
                     wave2TargetSlotId=wave2_target,
+                    durationMs=meta.audio_duration_ms,
                 )
             )
 
@@ -510,6 +513,7 @@ class EventsOrchestrator:
                     wave2PathAbs=wave2_abs,
                     wave2PathRel=wave2_rel,
                     wave2TargetSlotId=wave2_target,
+                    durationMs=meta.audio_duration_ms,
                 )
             )
             play_order.append(PlayOrderItem(role="commenter", slotId=meta.slot_id))
@@ -530,6 +534,7 @@ class EventsOrchestrator:
             wave2PathAbs=wave2_abs,
             wave2PathRel=wave2_rel,
             wave2TargetSlotId=wave2_target,
+            durationMs=resp_meta.audio_duration_ms,
         )
         play_order.append(PlayOrderItem(role="respondent", slotId=resp_meta.slot_id))
 
@@ -671,7 +676,8 @@ class EventsOrchestrator:
         state.summary_emitted = True
 
         if success:
-            meta = SummaryMeta(
+            # Use state.summary_meta if available (has audio_duration_ms), else create new
+            meta = state.summary_meta if state.summary_meta else SummaryMeta(
                 voice_profile=voice_profile,
                 tts_basename=tts_basename,
                 text=text,
@@ -685,6 +691,7 @@ class EventsOrchestrator:
                     slotId=slot_id,
                     wavePathAbs=wave_abs,
                     wavePathRel=wave_rel,
+                    durationMs=meta.audio_duration_ms,
                 )
                 for slot_id, wave_abs, wave_rel in wave_paths
             ]

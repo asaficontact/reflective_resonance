@@ -18,6 +18,7 @@ class SlotWaveInfo(BaseModel):
     wave2PathAbs: str = Field(description="Absolute path to wave2 file")
     wave2PathRel: str = Field(description="Relative path to wave2 under artifacts/")
     wave2TargetSlotId: int = Field(description="Physical slot ID for wave2 playback")
+    durationMs: float = Field(description="Audio duration in milliseconds")
 
 
 class Turn1WavesPayload(BaseModel):
@@ -115,6 +116,7 @@ class SummarySlotWave(BaseModel):
     slotId: int = Field(ge=1, le=6, description="Target slot ID (1-6)")
     wavePathAbs: str = Field(description="Absolute path to wave file")
     wavePathRel: str = Field(description="Relative path under artifacts/")
+    durationMs: float = Field(description="Audio duration in milliseconds")
 
 
 class SummaryWaveInfo(BaseModel):

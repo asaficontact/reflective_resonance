@@ -46,7 +46,8 @@ class DecomposeResult:
     snr_db: float | None = None
     env_corr: float | None = None
     error: str | None = None
-    duration_ms: float = 0.0
+    duration_ms: float = 0.0  # Processing time
+    audio_duration_ms: float = 0.0  # Actual audio duration in milliseconds
 
 
 def _extract_harmonic_amp(
@@ -299,6 +300,9 @@ def decompose_audio_to_waves(
             sf.write(str(out_path), wave, sr)
             wave_paths.append(str(out_path))
 
+        # Calculate audio duration from wave length (all waves have same duration)
+        audio_duration_ms = len(final_waves[0]) / sr * 1000 if final_waves else 0.0
+
         duration_ms = (time.time() - start_time) * 1000
 
         return DecomposeResult(
@@ -312,6 +316,7 @@ def decompose_audio_to_waves(
             snr_db=snr_db,
             env_corr=env_corr,
             duration_ms=duration_ms,
+            audio_duration_ms=audio_duration_ms,
         )
 
     except Exception as e:
