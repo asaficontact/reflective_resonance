@@ -12,6 +12,8 @@ class SlotWaveInfo(BaseModel):
     slotId: int = Field(description="Agent's slot ID (1-6)")
     agentId: str = Field(description="Agent ID that produced this response")
     voiceProfile: str = Field(description="Voice profile used for TTS")
+    ttsPathAbs: str = Field(default="", description="Absolute path to original TTS speech file")
+    ttsPathRel: str = Field(default="", description="Relative path to TTS speech under artifacts/")
     wave1PathAbs: str = Field(description="Absolute path to wave1 file")
     wave1PathRel: str = Field(description="Relative path to wave1 under artifacts/")
     wave1TargetSlotId: int = Field(description="Physical slot ID for wave1 playback")
@@ -123,6 +125,8 @@ class SummaryWaveInfo(BaseModel):
     """Wave file info for summary (6 waves mapped to 6 slots)."""
 
     voiceProfile: str = Field(description="Voice profile used for TTS")
+    ttsPathAbs: str = Field(default="", description="Absolute path to original TTS summary speech file")
+    ttsPathRel: str = Field(default="", description="Relative path to TTS summary speech under artifacts/")
     waves: list[SummarySlotWave] = Field(
         min_length=6,
         max_length=6,

@@ -14,6 +14,19 @@ class SlotMeta:
     tts_basename: str  # Base filename for deriving wave-mix path
     audio_duration_ms: float = 0.0  # Audio duration in milliseconds
 
+    def derive_tts_path(
+        self, session_id: str, turn_index: int
+    ) -> tuple[str, str]:
+        """
+        Derive absolute and relative paths for the original TTS speech file.
+
+        Returns:
+            Tuple of (tts_abs, tts_rel)
+        """
+        tts_rel = f"tts/sessions/{session_id}/turn_{turn_index}/{self.tts_basename}.wav"
+        tts_abs = str((Path("artifacts") / tts_rel).resolve())
+        return (tts_abs, tts_rel)
+
     def derive_wave_paths(
         self, session_id: str, turn_index: int
     ) -> tuple[str, str, str, str]:
@@ -53,6 +66,16 @@ class SummaryMeta:
     text: str
     n_waves: int = 6  # Number of waves for summary (6 for 6 slots)
     audio_duration_ms: float = 0.0  # Audio duration in milliseconds
+
+    def derive_tts_path(self, session_id: str) -> tuple[str, str]:
+        """Derive absolute and relative paths for the original TTS summary speech file.
+
+        Returns:
+            Tuple of (tts_abs, tts_rel)
+        """
+        tts_rel = f"tts/sessions/{session_id}/summary/{self.tts_basename}.wav"
+        tts_abs = str((Path("artifacts") / tts_rel).resolve())
+        return (tts_abs, tts_rel)
 
     def derive_wave_paths(self, session_id: str) -> list[tuple[int, str, str]]:
         """Derive wave paths for summary (6 waves mapped to slots 1-6).

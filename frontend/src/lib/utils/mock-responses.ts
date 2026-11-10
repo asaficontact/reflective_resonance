@@ -3,35 +3,35 @@ import { STREAMING_CONFIG } from '$lib/config/constants';
 
 // Mock responses for each agent (3 variations each)
 const MOCK_RESPONSES: Record<AgentId, string[]> = {
-	'claude-sonnet-4-5': [
-		"I appreciate the thoughtful question. Let me offer a nuanced perspective that considers multiple viewpoints while remaining grounded in practical considerations.",
-		"That's an interesting topic to explore. From my analysis, there are several key factors to consider that might influence how we approach this.",
-		"Thank you for sharing. I find this fascinating and would like to suggest a framework for thinking about it that balances different priorities."
+	'claude-sage': [
+		"Still water keeps what is given to it, and lets the rest settle.",
+		"The well has heard this before, and it held then too.",
+		"Let it sink slowly; depth is where it rests."
 	],
-	'claude-opus-4-5': [
-		"This is a profound inquiry that touches on fundamental aspects of human experience. Allow me to explore the deeper implications and philosophical underpinnings.",
-		"What a rich topic for contemplation. I see layers of meaning here that connect to broader themes of consciousness, creativity, and connection.",
-		"The depth of this question invites careful reflection. Let me share some thoughts that weave together multiple threads of understanding."
+	'claude-poet': [
+		"Your words fall like rain on a drum of glass, each one a small bright ring.",
+		"A silver thread of sound unspools across the surface.",
+		"The water hums your sentence back in a lower key."
 	],
-	'gpt-5.2': [
-		"Great question! Here's a comprehensive breakdown with actionable insights and specific recommendations you can implement right away.",
-		"I can help with that! Let me provide a structured analysis with clear steps and practical examples to guide your approach.",
-		"Excellent topic! Based on current best practices and emerging trends, here's what I'd recommend for optimal results."
+	'claude-wonder': [
+		"Ooh, a ripple! It went all the way to the edge and came back.",
+		"The water wobbled when you said that. I think it heard you.",
+		"Look, a tiny bubble carried your words up to the light."
 	],
-	'gpt-5.1': [
-		"Let me think through this systematically. The key considerations include several important factors that we should weigh carefully.",
-		"That's a good question to explore. I'll break down the main elements and provide some balanced perspectives on each.",
-		"I'd be happy to help with that. Here's my analysis based on the available information and relevant context."
+	'claude-scientist': [
+		"Your voice became a standing wave; the pattern you see is your feeling, made visible.",
+		"Surface tension holds even the heaviest drop for a moment.",
+		"Every vibration you sent is still resonating in the vessel."
 	],
-	'gpt-4o': [
-		"Here's a quick and direct answer: the main points to consider are clarity, efficiency, and practical application.",
-		"To address your question directly: I'd focus on the core elements first, then expand from there based on your specific needs.",
-		"Simply put, the best approach involves understanding the fundamentals and building systematically from there."
+	'claude-questioner': [
+		"What would it feel like to let the water carry this for a while?",
+		"When the ripples settle, what do you hope remains?",
+		"Which part of that are you still holding?"
 	],
-	'gemini-3': [
-		"I've analyzed this from multiple angles and found some interesting patterns. Let me share insights that synthesize different perspectives.",
-		"This connects to several fascinating areas. Drawing from diverse knowledge domains, here's a multi-faceted view of the topic.",
-		"Looking at this holistically, I see opportunities to integrate ideas from different fields for a more comprehensive understanding."
+	'claude-trickster': [
+		"The water giggled a little. Don't worry, it does that when it's moved.",
+		"Splash! There goes the heavy part, sideways for once.",
+		"Even puddles have big dreams. So do you, clearly."
 	]
 };
 

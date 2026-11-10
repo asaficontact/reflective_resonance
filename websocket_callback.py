@@ -69,9 +69,9 @@ SENTIMENT_EFFECTS = {
 # Sentiment audio paths - played on slots 1A-6A until Turn 1 arrives
 # Replace these placeholder paths with actual wave files
 SENTIMENT_AUDIO_PATHS = {
-    'positive': '/path/to/sentiment_positive.wav',
-    'neutral':  '/path/to/sentiment_neutral.wav',
-    'negative': '/path/to/sentiment_negative.wav',
+    'positive': '/Users/ruipeng/Documents/siggraph/reflective_resonance/final load.2.wav',
+    'neutral':  '/Users/ruipeng/Documents/siggraph/reflective_resonance/final load.2.wav',
+    'negative': '/Users/ruipeng/Documents/siggraph/reflective_resonance/final load.2.wav',
 }
 
 
@@ -702,12 +702,19 @@ def onConnect(dat, client=None):
 
 
 def onDisconnect(dat, client=None):
-    debug('WebSocket disconnected', client)
+    debug('WebSocket disconnected', client, '- will auto-reconnect in 3s')
     # NOTE: Don't clear playback state on disconnect!
     # Events are already received and playback should continue.
     # The backend often disconnects after sending all events.
     # Only clear deduplication state for the next connection.
     # _STATE["last_seq_by_session"] could be cleared here if needed
+
+    # Auto-reconnect: toggle websocket1 DAT off then on after a short delay
+    try:
+        run("try:\n\top('websocket1').par.active = False\nexcept:\n\tpass", delayMilliSeconds=1000, fromOP=me)
+        run("try:\n\top('websocket1').par.active = True\nexcept:\n\tpass", delayMilliSeconds=3000, fromOP=me)
+    except:
+        debug('  Auto-reconnect scheduling failed')
     return
 
 

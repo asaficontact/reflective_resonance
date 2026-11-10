@@ -12,6 +12,7 @@ import type {
 	SlotTurnData
 } from '$lib/types';
 import { browser } from '$app/environment';
+import { AGENTS } from '$lib/config/agents';
 
 // Generate unique message IDs
 function generateId(): string {
@@ -323,7 +324,8 @@ function createAppStore() {
 			if (stored) {
 				const state: PersistedState = JSON.parse(stored);
 				state.slots.forEach((persisted) => {
-					if (persisted.agentId) {
+					// Skip agents that no longer exist (e.g. saved before the all-Claude roster)
+					if (persisted.agentId && persisted.agentId in AGENTS) {
 						assignAgentToSlot(persisted.id, persisted.agentId);
 					}
 				});

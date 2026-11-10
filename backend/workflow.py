@@ -16,7 +16,7 @@ from typing import Any
 
 from sse_starlette.sse import ServerSentEvent
 
-from backend.agents import get_llm, get_model_for_agent
+from backend.agents import SUMMARY_AGENT_ID, get_llm, get_model_for_agent
 from backend.config import settings
 from backend.conversations import get_or_create_conversation
 from backend.models import (
@@ -365,7 +365,7 @@ async def process_turn1_slot(
         )
 
         # Get conversation and LLM
-        conv = get_or_create_conversation(slot_id)
+        conv = get_or_create_conversation(slot_id, agent_id)
         llm = get_llm(agent_id)
         model = get_model_for_agent(agent_id)
 
@@ -632,7 +632,7 @@ async def process_turn2_slot(
         )
 
         # Get conversation and LLM
-        conv = get_or_create_conversation(slot_id)
+        conv = get_or_create_conversation(slot_id, agent_id)
         llm = get_llm(agent_id)
         model = get_model_for_agent(agent_id)
 
@@ -936,7 +936,7 @@ async def process_turn3_slot(
         )
 
         # Get conversation and LLM
-        conv = get_or_create_conversation(slot_id)
+        conv = get_or_create_conversation(slot_id, agent_id)
         llm = get_llm(agent_id)
         model = get_model_for_agent(agent_id)
 
@@ -1217,7 +1217,7 @@ async def execute_summary(
 ) -> SummaryResult:
     """Execute Turn 4: Generate summary of all responses.
 
-    Uses gpt-4o with fresh conversation (no history).
+    Uses settings.summary_model with a fresh conversation (no history).
 
     Args:
         state: Workflow state with turn results
@@ -1254,13 +1254,13 @@ async def execute_summary(
                     turnIndex=4,
                     kind="summary",
                     slotId=0,
-                    agentId="gpt-4o",
+                    agentId=SUMMARY_AGENT_ID,
                 ).model_dump_json(),
             )
         )
 
-        # Get LLM (gpt-4o, fresh conversation)
-        llm = get_llm("gpt-4o")
+        # Get LLM (fresh conversation; model comes from settings.summary_model)
+        llm = get_llm(SUMMARY_AGENT_ID)
         model = settings.summary_model
 
         # Render prompt
@@ -1294,7 +1294,7 @@ async def execute_summary(
                     turnIndex=4,
                     kind="summary",
                     slotId=0,
-                    agentId="gpt-4o",
+                    agentId=SUMMARY_AGENT_ID,
                     text=response.text,
                     voiceProfile=response.voice_profile,
                 ).model_dump_json(),
@@ -1327,7 +1327,7 @@ async def execute_summary(
                         turnIndex=4,
                         kind="summary",
                         slotId=0,
-                        agentId="gpt-4o",
+                        agentId=SUMMARY_AGENT_ID,
                         voiceProfile=response.voice_profile,
                         audioPath=relative_path,
                     ).model_dump_json(),
@@ -1340,7 +1340,7 @@ async def execute_summary(
                 session_id,
                 turn_index=-1,  # Special index for summary
                 slot_id=-1,
-                agent_id="gpt-4o",
+                agent_id=SUMMARY_AGENT_ID,
                 voice_profile=response.voice_profile,
                 summary_text=response.text,  # Pass text for event emission
                 n_waves=6,  # 6 waves for 6 speaker slots

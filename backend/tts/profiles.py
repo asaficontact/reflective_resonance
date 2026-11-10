@@ -74,9 +74,11 @@ VOICE_PROFILES: dict[VoiceProfileName, VoiceProfile] = {
     ),
     "calm_soothing": VoiceProfile(
         name="calm_soothing",
-        voice_id="21m00Tcm4TlvDq8ikWAM",  # Rachel
-        voice_name="Rachel",
-        description="Young female, American, calm, pleasant",
+        # Rachel (21m00Tcm4TlvDq8ikWAM) is a library voice now and needs a paid
+        # ElevenLabs plan via the API; Lily is a free premade voice.
+        voice_id="pFZP5JQG7iQjIQuC4Bku",  # Lily
+        voice_name="Lily",
+        description="Female, British, velvety, calm",
         settings=VoiceSettings(
             stability=0.65,
             similarity_boost=0.75,

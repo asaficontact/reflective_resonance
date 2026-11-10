@@ -71,14 +71,14 @@ Choose based on the emotional quality you sense:
 
     # Sentiment analysis configuration
     sentiment_enabled: bool = True
-    sentiment_model: str = "openai/gpt-4o-mini"
+    sentiment_model: str = "anthropic/claude-opus-5-5"
     sentiment_temperature: float = 0.3
     sentiment_timeout_s: float = 10.0
     sentiment_max_tokens: int = 100
 
     # Summary (Turn 4) configuration
     summary_enabled: bool = True
-    summary_model: str = "openai/gpt-4o"
+    summary_model: str = "anthropic/claude-opus-5-5"
     summary_temperature: float = 0.5
     summary_timeout_s: float = 15.0
     summary_max_tokens: int = 300

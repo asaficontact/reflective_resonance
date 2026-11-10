@@ -274,7 +274,7 @@ class EventsOrchestrator:
 
     async def _consume_results(self) -> None:
         """Consume wave decomposition results and update session state."""
-        logger.debug("Results consumer started")
+        logger.info("[DIAG] Results consumer started")
 
         while self._running:
             try:
@@ -303,9 +303,14 @@ class EventsOrchestrator:
         session_id = job.session_id
         turn_index = job.turn_index
 
+        logger.info(
+            f"[DIAG] _handle_result called: session={session_id}, "
+            f"turn={turn_index}, slot={job.slot_id}, success={decompose_result.success}"
+        )
+
         state = self._sessions.get(session_id)
         if not state:
-            logger.debug(f"Result for unknown session {session_id}, ignoring")
+            logger.info(f"[DIAG] Result for unknown session {session_id}, ignoring")
             return
 
         # Handle summary result first (turn_index=-1) - independent of batch emission
@@ -372,21 +377,24 @@ class EventsOrchestrator:
         # Update state based on turn
         if turn_index == 1:
             state.turn1_ready[slot_id] = meta
-            logger.debug(
-                f"Turn 1 slot {slot_id} ready: "
-                f"{len(state.turn1_ready)}/{len(state.turn1_expected)}"
+            logger.info(
+                f"[DIAG] Turn 1 slot {slot_id} ready: "
+                f"{len(state.turn1_ready)}/{len(state.turn1_expected)}, "
+                f"expected={state.turn1_expected}, ready={set(state.turn1_ready.keys())}"
             )
         elif turn_index == 2:
             state.turn2_ready[slot_id] = meta
-            logger.debug(
-                f"Turn 2 slot {slot_id} ready: "
-                f"{len(state.turn2_ready)}/{len(state.turn2_expected)}"
+            logger.info(
+                f"[DIAG] Turn 2 slot {slot_id} ready: "
+                f"{len(state.turn2_ready)}/{len(state.turn2_expected)}, "
+                f"expected={state.turn2_expected}, ready={set(state.turn2_ready.keys())}"
             )
         elif turn_index == 3:
             state.turn3_ready[slot_id] = meta
-            logger.debug(
-                f"Turn 3 slot {slot_id} ready: "
-                f"{len(state.turn3_ready)}/{len(state.turn3_expected)}"
+            logger.info(
+                f"[DIAG] Turn 3 slot {slot_id} ready: "
+                f"{len(state.turn3_ready)}/{len(state.turn3_expected)}, "
+                f"expected={state.turn3_expected}, ready={set(state.turn3_ready.keys())}"
             )
 
         # Check batch readiness (unified check replaces individual checks)
@@ -432,6 +440,7 @@ class EventsOrchestrator:
         # Build slot info list
         slots = []
         for slot_id, meta in sorted(state.turn1_ready.items()):
+            tts_abs, tts_rel = meta.derive_tts_path(session_id, 1)
             wave1_abs, wave1_rel, wave2_abs, wave2_rel = meta.derive_wave_paths(session_id, 1)
             wave1_target, wave2_target = self._compute_target_slots(meta.slot_id)
             slots.append(
@@ -439,6 +448,8 @@ class EventsOrchestrator:
                     slotId=meta.slot_id,
                     agentId=meta.agent_id,
                     voiceProfile=meta.voice_profile,
+                    ttsPathAbs=tts_abs,
+                    ttsPathRel=tts_rel,
                     wave1PathAbs=wave1_abs,
                     wave1PathRel=wave1_rel,
                     wave1TargetSlotId=wave1_target,
@@ -500,6 +511,7 @@ class EventsOrchestrator:
         for commenter in dialogue.commenters:
             # Get the actual metadata from turn2_ready
             meta = state.turn2_ready.get(commenter.slot_id, commenter)
+            tts_abs, tts_rel = meta.derive_tts_path(session_id, 2)
             wave1_abs, wave1_rel, wave2_abs, wave2_rel = meta.derive_wave_paths(session_id, 2)
             wave1_target, wave2_target = self._compute_target_slots(meta.slot_id)
             commenters.append(
@@ -507,6 +519,8 @@ class EventsOrchestrator:
                     slotId=meta.slot_id,
                     agentId=meta.agent_id,
                     voiceProfile=meta.voice_profile,
+                    ttsPathAbs=tts_abs,
+                    ttsPathRel=tts_rel,
                     wave1PathAbs=wave1_abs,
                     wave1PathRel=wave1_rel,
                     wave1TargetSlotId=wave1_target,
@@ -522,12 +536,15 @@ class EventsOrchestrator:
         resp_meta = state.turn3_ready.get(
             dialogue.respondent.slot_id, dialogue.respondent
         )
+        resp_tts_abs, resp_tts_rel = resp_meta.derive_tts_path(session_id, 3)
         wave1_abs, wave1_rel, wave2_abs, wave2_rel = resp_meta.derive_wave_paths(session_id, 3)
         wave1_target, wave2_target = self._compute_target_slots(resp_meta.slot_id)
         respondent = SlotWaveInfo(
             slotId=resp_meta.slot_id,
             agentId=resp_meta.agent_id,
             voiceProfile=resp_meta.voice_profile,
+            ttsPathAbs=resp_tts_abs,
+            ttsPathRel=resp_tts_rel,
             wave1PathAbs=wave1_abs,
             wave1PathRel=wave1_rel,
             wave1TargetSlotId=wave1_target,
@@ -562,8 +579,25 @@ class EventsOrchestrator:
     async def _check_and_emit_batch(self, session_id: str) -> None:
         """Check if all waves ready and emit batch of events."""
         state = self._sessions.get(session_id)
-        if not state or state.batch_emitted or not state.workflow_complete:
+        if not state:
+            logger.info(f"[DIAG] _check_and_emit_batch: no state for {session_id}")
             return
+        if state.batch_emitted:
+            logger.info(f"[DIAG] _check_and_emit_batch: batch already emitted for {session_id}")
+            return
+        if not state.workflow_complete:
+            logger.info(f"[DIAG] _check_and_emit_batch: workflow not complete for {session_id}")
+            return
+
+        t1_ok = state.is_turn1_complete()
+        t2_ok = state.is_turn2_complete()
+        t3_ok = state.is_turn3_complete()
+        logger.info(
+            f"[DIAG] _check_and_emit_batch: session={session_id}, "
+            f"t1={t1_ok} ({len(state.turn1_ready)}/{len(state.turn1_expected)}), "
+            f"t2={t2_ok} ({len(state.turn2_ready)}/{len(state.turn2_expected)}), "
+            f"t3={t3_ok} ({len(state.turn3_ready)}/{len(state.turn3_expected)})"
+        )
 
         if not state.is_all_waves_ready():
             return
@@ -684,6 +718,7 @@ class EventsOrchestrator:
                 n_waves=n_waves,
             )
             wave_paths = meta.derive_wave_paths(session_id)
+            tts_abs, tts_rel = meta.derive_tts_path(session_id)
 
             # Build list of SummarySlotWave (6 waves mapped to slots 1-6)
             waves = [
@@ -701,6 +736,8 @@ class EventsOrchestrator:
                 text=text,
                 waveInfo=SummaryWaveInfo(
                     voiceProfile=voice_profile,
+                    ttsPathAbs=tts_abs,
+                    ttsPathRel=tts_rel,
                     waves=waves,
                 ),
             )

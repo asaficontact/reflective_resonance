@@ -10,12 +10,12 @@ from backend.tts.profiles import VoiceProfileName
 
 # Type aliases matching frontend
 AgentId = Literal[
-    "claude-sonnet-4-5",
-    "claude-opus-4-5",
-    "gpt-5.2",
-    "gpt-5.1",
-    "gpt-4o",
-    "gemini-3",
+    "claude-sage",
+    "claude-poet",
+    "claude-wonder",
+    "claude-scientist",
+    "claude-questioner",
+    "claude-trickster",
 ]
 SlotId = Literal[1, 2, 3, 4, 5, 6]
 ErrorType = Literal["network", "timeout", "rate_limit", "server_error", "tts_error", "unknown"]

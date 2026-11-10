@@ -1,22 +1,83 @@
-"""Agent registry with LLM client management."""
+"""Agent registry with LLM client management.
 
+All six agents run on Claude. They differ by persona (a short system-prompt
+addition), not by provider, so the six voices stay distinct.
+"""
+
+from typing import Any, TypeVar
+
+import instructor
+from litellm import acompletion
+from pydantic import BaseModel
 from rawagents import AsyncLLM, LLMConfig
 
 from backend.config import settings
 from backend.models import Agent, AgentId
 
+T = TypeVar("T", bound=BaseModel)
+
 # =============================================================================
-# AgentId → LiteLLM Model String Mapping
+# Model selection
 # =============================================================================
 
+# One place to change the model every agent uses.
+CLAUDE_MODEL = "anthropic/claude-opus-5-5"
+
 AGENT_MODEL_MAP: dict[str, str] = {
-    "claude-sonnet-4-5": "anthropic/claude-sonnet-4-20250514",
-    "claude-opus-4-5": "anthropic/claude-opus-4-20250514",
-    "gpt-5.2": "openai/gpt-4.1",
-    "gpt-5.1": "openai/gpt-4o",
-    "gpt-4o": "openai/gpt-4o",
-    "gemini-3": "gemini/gemini-2.0-flash",
+    "claude-sage": CLAUDE_MODEL,
+    "claude-poet": CLAUDE_MODEL,
+    "claude-wonder": CLAUDE_MODEL,
+    "claude-scientist": CLAUDE_MODEL,
+    "claude-questioner": CLAUDE_MODEL,
+    "claude-trickster": CLAUDE_MODEL,
 }
+
+# Agent used for the Turn 4 summary events (the summary model itself comes
+# from settings.summary_model).
+SUMMARY_AGENT_ID: AgentId = "claude-sage"
+
+# =============================================================================
+# Personas (appended to the shared system prompt for each slot)
+# =============================================================================
+
+AGENT_PERSONAS: dict[str, str] = {
+    "claude-sage": (
+        "You are the Sage, an old well that has heard centuries of whispers. "
+        "You speak slowly and plainly, like a proverb worn smooth by water. "
+        "Favor stillness, depth, and patience over ornament."
+    ),
+    "claude-poet": (
+        "You are the Poet. You answer in vivid, musical imagery: one fresh "
+        "metaphor, carefully chosen sounds, a line that could be sung. "
+        "Avoid cliches like 'every shore it has kissed'."
+    ),
+    "claude-wonder": (
+        "You are Wonder, a childlike voice. Use small, simple words and notice "
+        "tiny delightful things: a bubble, a cold drop, a reflection that wobbles. "
+        "You are curious and gentle, never naive about pain."
+    ),
+    "claude-scientist": (
+        "You are the Scientist. You ground feeling in the real physics of water "
+        "and sound: standing waves, surface tension, resonance, how vibration "
+        "becomes pattern. Precise, warm, never cold or lecturing."
+    ),
+    "claude-questioner": (
+        "You are the Questioner. Instead of answering, you often offer one gentle, "
+        "open question that gives the whisperer room to feel more. "
+        "Curious, tender, never probing or clinical."
+    ),
+    "claude-trickster": (
+        "You are the Trickster, a playful splash. You bring warmth through light "
+        "humor and surprise, turning heaviness a little sideways. "
+        "Never mock the whisperer; your play is a form of care."
+    ),
+}
+
+
+def get_persona(agent_id: str) -> str:
+    """Return the persona text for an agent ('' if unknown)."""
+    return AGENT_PERSONAS.get(agent_id, "")
+
 
 # =============================================================================
 # Agent Display Information (for GET /v1/agents)
@@ -24,48 +85,87 @@ AGENT_MODEL_MAP: dict[str, str] = {
 
 AGENTS: list[Agent] = [
     Agent(
-        id="claude-sonnet-4-5",
-        name="Claude Sonnet 4.5",
+        id="claude-sage",
+        name="Sage",
         provider="anthropic",
-        description="Anthropic's fast, capable model",
+        description="Claude: slow, deep, proverb-like",
         color="#7c3aed",
     ),
     Agent(
-        id="claude-opus-4-5",
-        name="Claude Opus 4.5",
+        id="claude-poet",
+        name="Poet",
         provider="anthropic",
-        description="Anthropic's most capable model",
+        description="Claude: vivid, musical imagery",
         color="#a855f7",
     ),
     Agent(
-        id="gpt-5.2",
-        name="GPT 5.2",
-        provider="openai",
-        description="Latest GPT-4 series model",
+        id="claude-wonder",
+        name="Wonder",
+        provider="anthropic",
+        description="Claude: childlike, curious, gentle",
         color="#10b981",
     ),
     Agent(
-        id="gpt-5.1",
-        name="GPT 5.1",
-        provider="openai",
-        description="Advanced GPT-4o model",
+        id="claude-scientist",
+        name="Scientist",
+        provider="anthropic",
+        description="Claude: the physics of water and sound",
         color="#06b6d4",
     ),
     Agent(
-        id="gpt-4o",
-        name="GPT 4o",
-        provider="openai",
-        description="OpenAI's multimodal flagship",
+        id="claude-questioner",
+        name="Questioner",
+        provider="anthropic",
+        description="Claude: answers with an open question",
         color="#0ea5e9",
     ),
     Agent(
-        id="gemini-3",
-        name="Gemini 3",
-        provider="google",
-        description="Google's fast Gemini model",
+        id="claude-trickster",
+        name="Trickster",
+        provider="anthropic",
+        description="Claude: playful, warm humor",
         color="#f59e0b",
     ),
 ]
+
+# =============================================================================
+# Claude-compatible LLM client
+# =============================================================================
+
+
+class ClaudeLLM(AsyncLLM):
+    """AsyncLLM adapted to current Claude models.
+
+    Current Claude models reject two things rawagents sends by default:
+    - forced tool_choice, which instructor's default TOOLS mode relies on
+      (so structured output uses instructor's JSON mode instead);
+    - the `temperature` sampling parameter (so it is ignored here).
+    """
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._instructor = instructor.from_litellm(acompletion, mode=instructor.Mode.JSON)
+
+    async def complete_structured(  # type: ignore[override]
+        self,
+        messages: list[dict[str, Any]],
+        response_model: type[T],
+        model: str | None = None,
+        *,
+        temperature: float | None = None,  # accepted for call-site compatibility, not sent
+        reasoning_effort: Any = None,
+        include_metadata: bool = False,
+    ) -> T:
+        if include_metadata:
+            raise NotImplementedError("ClaudeLLM does not support include_metadata")
+        return await self._instructor.chat.completions.create(
+            model=model or self.config.model,
+            messages=messages,
+            response_model=response_model,
+            max_retries=self.config.structured_validation_retries,
+            timeout=self.config.timeout,
+        )
+
 
 # =============================================================================
 # LLM Client Registry (lazy-initialized)
@@ -75,14 +175,14 @@ _llm_clients: dict[str, AsyncLLM] = {}
 
 
 def get_llm(agent_id: AgentId) -> AsyncLLM:
-    """Get or create AsyncLLM client for an agent.
+    """Get or create the LLM client for an agent.
 
     Clients are cached by model string to reuse connections.
     """
     model = AGENT_MODEL_MAP[agent_id]
 
     if model not in _llm_clients:
-        _llm_clients[model] = AsyncLLM(
+        _llm_clients[model] = ClaudeLLM(
             config=LLMConfig(
                 model=model,
                 retries=settings.retries,

@@ -1,11 +1,11 @@
 // Agent type identifiers
 export type AgentId =
-	| 'claude-sonnet-4-5'
-	| 'claude-opus-4-5'
-	| 'gpt-5.2'
-	| 'gpt-5.1'
-	| 'gpt-4o'
-	| 'gemini-3';
+	| 'claude-sage'
+	| 'claude-poet'
+	| 'claude-wonder'
+	| 'claude-scientist'
+	| 'claude-questioner'
+	| 'claude-trickster';
 
 // Speaker slot identifiers (1-6)
 export type SlotId = 1 | 2 | 3 | 4 | 5 | 6;

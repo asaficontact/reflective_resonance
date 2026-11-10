@@ -5,6 +5,8 @@ import logging
 
 from rawagents import AsyncLLM, LLMConfig
 
+from backend.agents import ClaudeLLM
+
 from backend.config import settings
 from backend.prompts import render_sentiment_prompt
 from backend.sentiment.models import SentimentResult
@@ -18,7 +20,7 @@ def get_sentiment_llm() -> AsyncLLM:
     """Get or create sentiment LLM client (lazy init)."""
     global _sentiment_llm
     if _sentiment_llm is None:
-        _sentiment_llm = AsyncLLM(
+        _sentiment_llm = ClaudeLLM(
             config=LLMConfig(
                 model=settings.sentiment_model,
                 retries=1,
