@@ -15,7 +15,7 @@ cp .env.example .env
 
 # 2. Start backend (requires Python 3.13+)
 uv sync
-uv run uvicorn backend.main:app --reload --port 8000
+uv run python -m backend.main   # use this with TouchDesigner (WebSocket pings off, see below)
 
 # 3. Start frontend (new terminal)
 cd frontend
@@ -278,7 +278,16 @@ data: {"completedSlots": 3}
 
 ### WebSocket Events (TouchDesigner)
 
-Connect to `ws://localhost:8000/v1/events` to receive wave completion events:
+Connect to `ws://localhost:8000/v1/events` to receive wave completion events.
+
+> **Start the backend with `uv run python -m backend.main` when TouchDesigner is connected.**
+> Plain `uvicorn backend.main:app` sends WebSocket keepalive pings that TouchDesigner's
+> WebSocket DAT does not answer, so the server drops it about 50 seconds after it connects.
+> TouchDesigner does not reconnect by itself after the backend restarts: toggle the
+> WebSocket DAT's Active parameter, or reopen the project. Connect before speaking;
+> events sent while it is disconnected are not replayed.
+
+Event examples:
 
 ```json
 {

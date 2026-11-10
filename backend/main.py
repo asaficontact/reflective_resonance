@@ -265,9 +265,19 @@ async def speech_to_text(
 if __name__ == "__main__":
     import uvicorn
 
+    # Run with: uv run python -m backend.main
+    #
+    # WebSocket keepalive pings are disabled on purpose. TouchDesigner's
+    # WebSocket DAT does not answer uvicorn's pings, so with the defaults
+    # (20s interval + 20s timeout) the server drops TouchDesigner about 50s
+    # after it connects, and TouchDesigner does not reconnect by itself.
+    #
+    # No auto-reload here: every reload restarts the server, which also
+    # disconnects TouchDesigner.
     uvicorn.run(
         "backend.main:app",
         host=settings.host,
         port=settings.port,
-        reload=True,
+        ws_ping_interval=None,
+        ws_ping_timeout=None,
     )

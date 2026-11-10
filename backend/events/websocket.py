@@ -61,4 +61,4 @@ async def events_websocket(websocket: WebSocket) -> None:
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
     finally:
-        await orchestrator.remove_client()
+        await orchestrator.remove_client(websocket)

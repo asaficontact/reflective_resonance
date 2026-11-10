@@ -11,7 +11,8 @@ Reflective Resonance is an interactive art installation with 6 speaker slots con
 ### Backend (Python 3.13+ with uv)
 ```bash
 uv sync                                          # Install dependencies
-uv run uvicorn backend.main:app --reload --port 8000  # Dev server with hot reload
+uv run python -m backend.main                    # Server for use with TouchDesigner (WS keepalive pings off)
+uv run uvicorn backend.main:app --reload --port 8000  # Dev server with hot reload (drops TouchDesigner after ~50s)
 ```
 
 ### Frontend (SvelteKit + Svelte 5)

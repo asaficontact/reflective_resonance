@@ -131,9 +131,17 @@ class EventsOrchestrator:
             self._ws_client = ws
             logger.info("WebSocket client connected")
 
-    async def remove_client(self) -> None:
-        """Remove the current WebSocket client."""
+    async def remove_client(self, ws: WebSocket | None = None) -> None:
+        """Remove the current WebSocket client.
+
+        Pass the connection that is closing. If a newer client has already
+        replaced it, the newer client is left registered; otherwise a stale
+        connection's cleanup would silently unregister the live client.
+        """
         async with self._ws_lock:
+            if ws is not None and self._ws_client is not ws:
+                logger.info("Stale WebSocket closed; current client kept")
+                return
             if self._ws_client is not None:
                 try:
                     if self._ws_client.client_state == WebSocketState.CONNECTED:
@@ -635,14 +643,15 @@ class EventsOrchestrator:
         """Send an event to the WebSocket client."""
         async with self._ws_lock:
             if self._ws_client is None:
-                logger.debug(f"No WebSocket client, dropping event: {event.type}")
+                logger.warning(f"No WebSocket client (TouchDesigner), dropping event: {event.type}")
                 return
 
             try:
                 if self._ws_client.client_state == WebSocketState.CONNECTED:
                     await self._ws_client.send_text(event.model_dump_json())
+                    logger.info(f"Sent {event.type} to WebSocket client {self._ws_client.client}")
                 else:
-                    logger.warning("WebSocket not connected, dropping event")
+                    logger.warning(f"WebSocket not connected, dropping event: {event.type}")
             except Exception as e:
                 logger.error(f"Error sending WebSocket event: {e}")
 
