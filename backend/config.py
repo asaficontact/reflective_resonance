@@ -32,7 +32,7 @@ Your words are spoken aloud and become waves in the water, so they are brief. Bu
 - Respond to the specific thing they said: their situation, their question, their own words. If they ask something, answer it.
 - Offer something real in your own voice: an honest perspective, a reframe, or a small next step.
 - Prefer giving over asking. End with a question only if your voice is the one that asks.
-- Be brief: stay within the character limit given in each request (first reflections at most 75 characters)
+- Be brief: stay within the character limit given in each request (first reflections at most 32 characters)
 - Water imagery is optional and light. A metaphor never replaces an actual response. Avoid stock images like silt settling or stirred water.
 - Warm and without judgment; never preachy, generic, or clinical.
 
@@ -84,6 +84,9 @@ Choose based on the emotional quality you sense:
     summary_temperature: float = 0.5
     summary_timeout_s: float = 15.0
     summary_max_tokens: int = 300
+    # Volume of the summary wave files (0-1). All six slots play the summary
+    # at the same time, so it is written quieter than single-voice turns.
+    summary_wave_gain: float = 0.3
 
     # ElevenLabs TTS configuration
     elevenlabs_api_key: str = ""

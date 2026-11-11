@@ -265,6 +265,9 @@ class WavesWorkerPool:
                 f"turn={job.turn_index}, file={job.input_path.name}"
             )
 
+            # Imported here to avoid a circular import at module load
+            from backend.config import settings
+
             # Run CPU-bound decomposition in process pool with timeout
             result: DecomposeResult = await asyncio.wait_for(
                 loop.run_in_executor(
@@ -274,6 +277,8 @@ class WavesWorkerPool:
                     str(job.output_dir),
                     job.n_waves,
                     job.target_slots,  # Pass target slots for frequency mapping
+                    # Summary (turn_index=-1) plays on all six slots at once: turn it down
+                    settings.summary_wave_gain if job.turn_index == -1 else 1.0,
                 ),
                 timeout=self._job_timeout_s,
             )

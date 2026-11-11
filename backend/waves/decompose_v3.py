@@ -139,6 +139,7 @@ def decompose_audio_to_waves(
     output_dir: str,
     n_waves: int = 2,
     target_slots: list[int] | None = None,
+    output_gain: float = 1.0,
 ) -> DecomposeResult:
     """
     Decompose a TTS WAV into N wave components with slot-aware frequency mapping.
@@ -297,7 +298,9 @@ def decompose_audio_to_waves(
         for i, wave in enumerate(final_waves):
             wave_num = i + 1
             out_path = output_dir_obj / f"{base_name}_v3_wave{wave_num}.wav"
-            sf.write(str(out_path), wave, sr)
+            # output_gain scales the written files only (e.g. the summary, where
+            # all six slots play at once and would otherwise be much louder)
+            sf.write(str(out_path), wave * output_gain, sr)
             wave_paths.append(str(out_path))
 
         # Calculate audio duration from wave length (all waves have same duration)

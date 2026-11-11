@@ -601,6 +601,7 @@ async def process_turn2_slot(
     slot_id: int,
     agent_id: str,
     queue: asyncio.Queue[ServerSentEvent],
+    partner_slot_id: int | None = None,
 ) -> Turn2Result:
     """Process Turn 2 for a single slot: comment on a peer response.
 
@@ -638,6 +639,9 @@ async def process_turn2_slot(
 
         # Build peer responses (excluding self and failed slots)
         peer_responses = build_peer_responses(state, slot_id)
+        if partner_slot_id is not None:
+            # Paired exchange: this voice answers exactly one assigned partner
+            peer_responses = [p for p in peer_responses if p["slotId"] == partner_slot_id]
 
         # Render prompt
         prompt = render_turn2_prompt(slot_id, agent_id, peer_responses)
@@ -650,6 +654,8 @@ async def process_turn2_slot(
             response_model=CommentSelection,
             temperature=settings.temperature,
         )
+        if partner_slot_id is not None:
+            response.targetSlotId = partner_slot_id  # the pairing decides the target
 
         # Add to conversation history
         conv.add_assistant(response.model_dump_json())
@@ -830,7 +836,12 @@ async def execute_turn2(
     state: WorkflowState,
     queue: asyncio.Queue[ServerSentEvent],
 ) -> None:
-    """Execute Turn 2 for all eligible slots in parallel.
+    """Execute Turn 2: half of the voices each answer one partner.
+
+    Turns 2 and 3 together form one short exchange in which every voice speaks
+    exactly once: the eligible slots are split into pairs, one voice of each
+    pair comments on its partner here (Turn 2) and the partner replies in
+    Turn 3. With an odd number of voices, one partner receives two comments.
 
     Only slots that succeeded in Turn 1 participate.
 
@@ -858,12 +869,25 @@ async def execute_turn2(
         )
     )
 
-    # Process all eligible slots in parallel
+    # Pair the voices: the first half reply in Turn 3, the rest comment now
+    shuffled = list(eligible_slots)
+    random.shuffle(shuffled)
+    n_respondents = len(shuffled) // 2
+    respondents = shuffled[:n_respondents]
+    commenters = shuffled[n_respondents:] if n_respondents else []
+
+    # Process the commenters in parallel, each with its assigned partner
     tasks = [
         asyncio.create_task(
-            process_turn2_slot(state, slot.slotId, slot.agentId, queue)
+            process_turn2_slot(
+                state,
+                slot.slotId,
+                slot.agentId,
+                queue,
+                partner_slot_id=respondents[i % n_respondents].slotId,
+            )
         )
-        for slot in eligible_slots
+        for i, slot in enumerate(commenters)
     ]
 
     results = await asyncio.gather(*tasks)
@@ -890,7 +914,7 @@ async def execute_turn2(
         )
     )
 
-    logger.info(f"Turn 2 complete: {successful_count}/{len(eligible_slots)} slots succeeded")
+    logger.info(f"Turn 2 complete: {successful_count}/{len(commenters)} commenters succeeded")
 
 
 # =============================================================================

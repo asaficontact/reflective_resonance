@@ -78,7 +78,7 @@ class STTSession:
         if user_agent:
             metadata["userAgent"] = user_agent
 
-        with open(self.get_metadata_path(), "w") as f:
+        with open(self.get_metadata_path(), "w", encoding="utf-8") as f:
             json.dump(metadata, f, indent=2)
 
     def write_transcript(self, scribe_response: dict[str, Any], plain_text: str) -> None:
@@ -89,11 +89,11 @@ class STTSession:
             plain_text: Plain text transcript string
         """
         # Write full JSON response
-        with open(self.get_transcript_json_path(), "w") as f:
+        with open(self.get_transcript_json_path(), "w", encoding="utf-8") as f:
             json.dump(scribe_response, f, indent=2)
 
         # Write plain text
-        with open(self.get_transcript_txt_path(), "w") as f:
+        with open(self.get_transcript_txt_path(), "w", encoding="utf-8") as f:
             f.write(plain_text)
 
     def save_input_audio(self, audio_bytes: bytes, ext: str) -> Path:

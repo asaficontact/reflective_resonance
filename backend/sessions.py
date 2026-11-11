@@ -232,7 +232,7 @@ class TTSSession:
     def write_manifest(self) -> Path:
         """Write session.json manifest to disk."""
         manifest_path = self.output_dir / "session.json"
-        with open(manifest_path, "w") as f:
+        with open(manifest_path, "w", encoding="utf-8") as f:
             json.dump(self._manifest, f, indent=2)
         return manifest_path
 

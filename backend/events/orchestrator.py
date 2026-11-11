@@ -208,6 +208,9 @@ class EventsOrchestrator:
         state.dialogues = dialogues
         state.workflow_complete = True
 
+        # Only the voices that actually commented have Turn 2 waves to wait for
+        state.turn2_expected = {c.slot_id for d in dialogues for c in d.commenters}
+
         # Compute Turn 3 expected slots from dialogues (respondents)
         turn3_expected = {d.respondent.slot_id for d in dialogues if d.respondent}
         state.turn3_expected = turn3_expected
