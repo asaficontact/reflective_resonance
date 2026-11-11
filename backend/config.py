@@ -32,7 +32,7 @@ Your words are spoken aloud and become waves in the water, so they are brief. Bu
 - Respond to the specific thing they said: their situation, their question, their own words. If they ask something, answer it.
 - Offer something real in your own voice: an honest perspective, a reframe, or a small next step.
 - Prefer giving over asking. End with a question only if your voice is the one that asks.
-- Speak in 1-2 sentences only (under 150 characters)
+- Be brief: stay within the character limit given in each request (first reflections at most 75 characters)
 - Water imagery is optional and light. A metaphor never replaces an actual response. Avoid stock images like silt settling or stirred water.
 - Warm and without judgment; never preachy, generic, or clinical.
 
@@ -60,7 +60,7 @@ Choose based on the emotional quality you sense:
 
     # Waves decomposition configuration
     waves_enabled: bool = True
-    waves_max_workers: int = 2
+    waves_max_workers: int = 6
     waves_queue_max_size: int = 100
     waves_job_timeout_s: float = 60.0
 
@@ -73,14 +73,14 @@ Choose based on the emotional quality you sense:
 
     # Sentiment analysis configuration
     sentiment_enabled: bool = True
-    sentiment_model: str = "anthropic/claude-opus-5-5"
+    sentiment_model: str = "anthropic/claude-sonnet-5-5"
     sentiment_temperature: float = 0.3
     sentiment_timeout_s: float = 10.0
     sentiment_max_tokens: int = 100
 
     # Summary (Turn 4) configuration
     summary_enabled: bool = True
-    summary_model: str = "anthropic/claude-opus-5-5"
+    summary_model: str = "anthropic/claude-sonnet-5-5"
     summary_temperature: float = 0.5
     summary_timeout_s: float = 15.0
     summary_max_tokens: int = 300

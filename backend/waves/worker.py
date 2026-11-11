@@ -14,6 +14,31 @@ from typing import Callable
 
 from backend.waves.decompose_v3 import DecomposeResult, decompose_audio_to_waves
 
+
+def _warm_up_worker(hold_s: float = 2.0) -> bool:
+    """Run one tiny decomposition inside a worker process.
+
+    A fresh worker pays ~25s on its first job (importing librosa and compiling
+    its numba kernels). Doing that at startup keeps the first visitor from
+    waiting for it. The short sleep keeps this worker busy so that each
+    warm-up task lands on a different process.
+    """
+    import tempfile
+
+    import numpy as np
+    import soundfile as sf
+
+    with tempfile.TemporaryDirectory() as tmp:
+        sr = 24000
+        t = np.arange(int(sr * 1.0)) / sr
+        src = Path(tmp) / "warmup.wav"
+        # A voiced-like tone with harmonics so pitch tracking has something to follow
+        y = 0.3 * np.sin(2 * np.pi * 180 * t) + 0.1 * np.sin(2 * np.pi * 360 * t)
+        sf.write(src, y.astype(np.float32), sr)
+        decompose_audio_to_waves(str(src), tmp, 2, [1, 2])
+    time.sleep(hold_s)
+    return True
+
 logger = logging.getLogger(__name__)
 
 
@@ -111,6 +136,28 @@ class WavesWorkerPool:
             self._worker_tasks.append(task)
 
         logger.info(f"WavesWorkerPool started with {self._max_workers} workers")
+
+        # Warm the worker processes in the background (does not block startup)
+        self._warmup_task = asyncio.create_task(self._warm_up())
+
+    async def _warm_up(self) -> None:
+        """Pre-load librosa in every worker process so the first job is fast."""
+        if self._executor is None:
+            return
+        loop = asyncio.get_running_loop()
+        start = time.perf_counter()
+        try:
+            await asyncio.gather(
+                *[
+                    loop.run_in_executor(self._executor, _warm_up_worker)
+                    for _ in range(self._max_workers)
+                ]
+            )
+            logger.info(
+                f"WavesWorkerPool warm-up done in {time.perf_counter() - start:.1f}s"
+            )
+        except Exception as e:  # warm-up is best-effort
+            logger.warning(f"WavesWorkerPool warm-up failed: {e}")
 
     async def stop(self) -> None:
         """Gracefully stop the worker pool. Call on app shutdown."""

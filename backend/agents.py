@@ -21,7 +21,7 @@ T = TypeVar("T", bound=BaseModel)
 # =============================================================================
 
 # One place to change the model every agent uses.
-CLAUDE_MODEL = "anthropic/claude-opus-5-5"
+CLAUDE_MODEL = "anthropic/claude-sonnet-5-5"
 
 AGENT_MODEL_MAP: dict[str, str] = {
     "claude-sage": CLAUDE_MODEL,

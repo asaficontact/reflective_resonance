@@ -72,6 +72,8 @@ class EventsOrchestrator:
 
         # Timeout tasks per session
         self._timeout_tasks: dict[str, asyncio.Task] = {}
+        # Summary events held back until the dialogue batch has been sent
+        self._pending_summaries: dict[str, dict] = {}
 
     async def start(self) -> None:
         """Start the orchestrator. Call on app startup."""
@@ -185,7 +187,7 @@ class EventsOrchestrator:
             logger.warning(f"turn1_complete: Session {session_id} not found")
             return
 
-        logger.info(f"Session {session_id}: Turn 1 LLM/TTS complete, awaiting batch")
+        logger.info(f"Session {session_id}: Turn 1 LLM/TTS complete")
 
     def turn3_complete(
         self, session_id: str, dialogues: list[DialogueSpec]
@@ -405,7 +407,12 @@ class EventsOrchestrator:
                 f"expected={state.turn3_expected}, ready={set(state.turn3_ready.keys())}"
             )
 
-        # Check batch readiness (unified check replaces individual checks)
+        # Turn 1 goes out as soon as its own waves are ready, so playback can
+        # start while Turns 2 and 3 are still being generated.
+        if turn_index == 1:
+            await self._check_and_emit_turn1(session_id)
+
+        # Dialogues (Turn 2+3) are still emitted together as a batch
         await self._check_and_emit_batch(session_id)
 
     # -------------------------------------------------------------------------
@@ -639,6 +646,11 @@ class EventsOrchestrator:
             f"partial={partial}, dialogues={len(state.get_ready_dialogues())}"
         )
 
+        # 3. Release a summary that became ready before the dialogues were sent
+        pending = self._pending_summaries.pop(session_id, None)
+        if pending is not None:
+            await self.emit_final_summary_ready(**pending)
+
     async def _send_event(self, event: EventEnvelope) -> None:
         """Send an event to the WebSocket client."""
         async with self._ws_lock:
@@ -714,6 +726,21 @@ class EventsOrchestrator:
         """
         state = self._sessions.get(session_id)
         if not state or state.summary_emitted:
+            return
+
+        # Keep event order turn1 -> dialogues -> summary. TouchDesigner plays the
+        # summary immediately if no dialogue is queued, so a summary that arrives
+        # before the dialogue batch would play over Turn 1.
+        if state.workflow_complete and not state.batch_emitted:
+            logger.info(f"Summary ready before dialogues, holding: session={session_id}")
+            self._pending_summaries[session_id] = dict(
+                session_id=session_id,
+                text=text,
+                voice_profile=voice_profile,
+                tts_basename=tts_basename,
+                success=success,
+                n_waves=n_waves,
+            )
             return
 
         state.summary_emitted = True

@@ -5,42 +5,42 @@ export const AGENTS: Record<AgentId, Agent> = {
 	'claude-sage': {
 		id: 'claude-sage',
 		name: 'Sage',
-		model: 'claude-opus-5-5',
+		model: 'claude-sonnet-5-5',
 		color: '#7c3aed', // violet
 		icon: 'sparkles'
 	},
 	'claude-poet': {
 		id: 'claude-poet',
 		name: 'Poet',
-		model: 'claude-opus-5-5',
+		model: 'claude-sonnet-5-5',
 		color: '#a855f7', // purple
 		icon: 'brain'
 	},
 	'claude-wonder': {
 		id: 'claude-wonder',
 		name: 'Wonder',
-		model: 'claude-opus-5-5',
+		model: 'claude-sonnet-5-5',
 		color: '#10b981', // emerald
 		icon: 'zap'
 	},
 	'claude-scientist': {
 		id: 'claude-scientist',
 		name: 'Scientist',
-		model: 'claude-opus-5-5',
+		model: 'claude-sonnet-5-5',
 		color: '#06b6d4', // cyan
 		icon: 'lightbulb'
 	},
 	'claude-questioner': {
 		id: 'claude-questioner',
 		name: 'Questioner',
-		model: 'claude-opus-5-5',
+		model: 'claude-sonnet-5-5',
 		color: '#0ea5e9', // sky
 		icon: 'message-circle'
 	},
 	'claude-trickster': {
 		id: 'claude-trickster',
 		name: 'Trickster',
-		model: 'claude-opus-5-5',
+		model: 'claude-sonnet-5-5',
 		color: '#f59e0b', // amber
 		icon: 'star'
 	}
